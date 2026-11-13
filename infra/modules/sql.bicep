@@ -1,6 +1,11 @@
 // Azure SQL logical server + the crm-reporting database that replaces the on-prem reporting replica.
 // Entra-only authentication: there is no SQL login at all, so there is no password to rotate, leak
 // or put in a parameter file. The Function App connects with its managed identity.
+// Server, database, auditing and the threat-detection policy come from AVM. Two things stay raw
+// because AVM cannot express them: the master-database diagnostic setting that routes server audit
+// events to Log Analytics, and the express (storage-less) vulnerability assessment.
+
+import { privateEndpointFor, diagnosticsToLaw } from 'conventions.bicep'
 
 @description('Base name, e.g. "mer-int-dev".')
 param baseName string
@@ -63,96 +68,95 @@ param logAnalyticsWorkspaceId string
 var serverName = '${baseName}-sql'
 var databaseName = 'crm-reporting'
 
-// Serverless-only properties are rejected on provisioned SKUs, so they are emitted conditionally.
+// Serverless-only properties are meaningless on provisioned SKUs; the AVM module always sends them,
+// so provisioned SKUs get the "disabled" values (-1 / 0) rather than null.
 var isServerless = contains(databaseSku.name, '_S_')
 
-resource sqlServer 'Microsoft.Sql/servers@2025-01-01' = {
-  name: serverName
-  location: location
-  tags: tags
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    version: '12.0'
+module sqlServer 'br/public:avm/res/sql/server:0.22.1' = {
+  name: 'sql'
+  params: {
+    name: serverName
+    location: location
+    tags: tags
+    managedIdentities: {
+      systemAssigned: true
+    }
     minimalTlsVersion: '1.2'
     publicNetworkAccess: 'Disabled'
     restrictOutboundNetworkAccess: 'Disabled'
     administrators: {
-      administratorType: 'ActiveDirectory'
+      azureADOnlyAuthentication: true
       principalType: 'Group'
       login: entraAdminLogin
       sid: entraAdminObjectId
       tenantId: entraAdminTenantId
-      azureADOnlyAuthentication: true
     }
-  }
-}
-
-resource database 'Microsoft.Sql/servers/databases@2025-01-01' = {
-  parent: sqlServer
-  name: databaseName
-  location: location
-  tags: tags
-  sku: databaseSku
-  properties: {
-    collation: 'SQL_Latin1_General_CP1_CI_AS'
-    maxSizeBytes: 34359738368 // 32 GB
-    zoneRedundant: zoneRedundant
-    autoPauseDelay: isServerless ? autoPauseDelayMinutes : null
-    minCapacity: isServerless ? json(minCapacity) : null
-    readScale: 'Disabled'
-    requestedBackupStorageRedundancy: backupStorageRedundancy
-    licenseType: 'LicenseIncluded'
-    maintenanceConfigurationId: subscriptionResourceId('Microsoft.Maintenance/publicMaintenanceConfigurations', maintenanceWindowName)
-    // Ledger/TDE defaults are already on; stating TDE explicitly is not needed in this API version.
-  }
-}
-
-// The "master" database is where server-level audit events surface; declaring it lets us attach
-// a diagnostic setting. Deploying it is a no-op on the actual database.
-resource masterDatabase 'Microsoft.Sql/servers/databases@2025-01-01' = {
-  parent: sqlServer
-  name: 'master'
-  location: location
-  properties: {}
-}
-
-resource serverAuditing 'Microsoft.Sql/servers/auditingSettings@2025-01-01' = {
-  parent: sqlServer
-  name: 'default'
-  properties: {
-    state: 'Enabled'
-    // Route audit to Log Analytics (via the master diagnostic setting below) instead of a storage
-    // account: one fewer resource with keys and it lands next to the application logs.
-    isAzureMonitorTargetEnabled: true
-    retentionDays: 0
-    auditActionsAndGroups: [
-      'SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP'
-      'FAILED_DATABASE_AUTHENTICATION_GROUP'
-      'BATCH_COMPLETED_GROUP'
+    databases: [
+      {
+        name: databaseName
+        tags: tags
+        sku: databaseSku
+        availabilityZone: -1
+        collation: 'SQL_Latin1_General_CP1_CI_AS'
+        maxSizeBytes: 34359738368 // 32 GB
+        zoneRedundant: zoneRedundant
+        autoPauseDelay: isServerless ? autoPauseDelayMinutes : -1
+        minCapacity: isServerless ? minCapacity : '0'
+        readScale: 'Disabled'
+        requestedBackupStorageRedundancy: backupStorageRedundancy
+        licenseType: 'LicenseIncluded'
+        maintenanceConfigurationId: subscriptionResourceId('Microsoft.Maintenance/publicMaintenanceConfigurations', maintenanceWindowName)
+        // Ledger/TDE defaults are already on; stating TDE explicitly is not needed in this API version.
+        diagnosticSettings: [
+          diagnosticsToLaw(logAnalyticsWorkspaceId, [{ categoryGroup: 'allLogs' }], [
+            { category: 'Basic' }
+            { category: 'InstanceAndAppAdvanced' }
+            { category: 'WorkloadManagement' }
+          ])
+        ]
+      }
+    ]
+    auditSettings: {
+      state: 'Enabled'
+      // Route audit to Log Analytics (via the master diagnostic setting below) instead of a storage
+      // account: one fewer resource with keys and it lands next to the application logs.
+      isAzureMonitorTargetEnabled: true
+      retentionDays: 0
+      auditActionsAndGroups: [
+        'SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP'
+        'FAILED_DATABASE_AUTHENTICATION_GROUP'
+        'BATCH_COMPLETED_GROUP'
+      ]
+    }
+    securityAlertPolicies: [
+      {
+        name: 'Default'
+        state: 'Enabled'
+        emailAccountAdmins: true
+      }
+    ]
+    privateEndpoints: [
+      privateEndpointFor('${baseName}-pe-sql', peSubnetId, 'sqlServer', privateDnsZoneId, location, tags)
     ]
   }
 }
 
-resource securityAlertPolicy 'Microsoft.Sql/servers/securityAlertPolicies@2025-01-01' = {
-  parent: sqlServer
-  name: 'Default'
-  properties: {
-    state: 'Enabled'
-    emailAccountAdmins: true
-  }
+// Parent handle for the raw child resources below. The name is deterministic, so the dependency on the
+// AVM module has to be stated explicitly.
+resource deployedServer 'Microsoft.Sql/servers@2025-01-01' existing = {
+  name: serverName
 }
 
-// Express vulnerability assessment needs no storage account, unlike the classic configuration.
-resource vulnerabilityAssessment 'Microsoft.Sql/servers/sqlVulnerabilityAssessments@2025-01-01' = {
-  parent: sqlServer
-  name: 'default'
-  properties: {
-    state: 'Enabled'
-  }
+// The "master" database is where server-level audit events surface; declaring it lets us attach
+// a diagnostic setting. Deploying it is a no-op on the actual database. Not expressible through the
+// AVM database type, which would try to apply a SKU and collation to it.
+resource masterDatabase 'Microsoft.Sql/servers/databases@2025-01-01' = {
+  parent: deployedServer
+  name: 'master'
+  location: location
+  properties: {}
   dependsOn: [
-    securityAlertPolicy
+    sqlServer
   ]
 }
 
@@ -167,53 +171,32 @@ resource masterDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
       { category: 'SQLSecurityAuditEvents', enabled: true }
     ]
   }
+}
+
+// Express vulnerability assessment needs no storage account, unlike the classic configuration that the
+// AVM module models (it requires a storage account resource ID).
+resource vulnerabilityAssessment 'Microsoft.Sql/servers/sqlVulnerabilityAssessments@2025-01-01' = {
+  parent: deployedServer
+  name: 'default'
+  properties: {
+    state: 'Enabled'
+  }
   dependsOn: [
-    serverAuditing
+    sqlServer
   ]
 }
 
-// 2021-05-01-preview is the only diagnostic-settings API with categoryGroup support; the GA 2016-09-01 lacks it.
-#disable-next-line use-recent-api-versions
-resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'to-law'
-  scope: database
-  properties: {
-    workspaceId: logAnalyticsWorkspaceId
-    logs: [
-      { categoryGroup: 'allLogs', enabled: true }
-    ]
-    metrics: [
-      { category: 'Basic', enabled: true }
-      { category: 'InstanceAndAppAdvanced', enabled: true }
-      { category: 'WorkloadManagement', enabled: true }
-    ]
-  }
-}
-
-module privateEndpoint 'private-endpoint.bicep' = {
-  name: 'pe-${serverName}'
-  params: {
-    name: '${baseName}-pe-sql'
-    location: location
-    tags: tags
-    subnetId: peSubnetId
-    privateLinkServiceId: sqlServer.id
-    groupId: 'sqlServer'
-    privateDnsZoneId: privateDnsZoneId
-  }
-}
-
 @description('Resource ID of the logical server.')
-output serverId string = sqlServer.id
+output serverId string = sqlServer.outputs.resourceId
 
 @description('Name of the logical server.')
-output serverName string = sqlServer.name
+output serverName string = sqlServer.outputs.name
 
 @description('Fully qualified domain name of the logical server.')
-output serverFqdn string = sqlServer.properties.fullyQualifiedDomainName
+output serverFqdn string = sqlServer.outputs.fullyQualifiedDomainName
 
 @description('Resource ID of the crm-reporting database.')
-output databaseId string = database.id
+output databaseId string = resourceId('Microsoft.Sql/servers/databases', sqlServer.outputs.name, databaseName)
 
 @description('Name of the crm-reporting database.')
-output databaseName string = database.name
+output databaseName string = databaseName

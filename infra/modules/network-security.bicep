@@ -1,5 +1,6 @@
 // NSGs and route tables for the spoke. Separated from the VNet so the rule sets can be reviewed
-// (and changed) without touching address space or peering.
+// (and changed) without touching address space or peering. The resources come from AVM; this file
+// only owns the rule sets and routes, which are the workload's decisions.
 
 @description('Base name used for all network resources, e.g. "mer-int-dev".')
 param baseName string
@@ -155,42 +156,46 @@ var apimRules = [
   denyLateralTraversalRule
 ]
 
-resource nsgPe 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
-  name: '${baseName}-nsg-pe'
-  location: location
-  tags: tags
-  properties: {
+module nsgPe 'br/public:avm/res/network/network-security-group:0.5.4' = {
+  name: 'nsg-pe'
+  params: {
+    name: '${baseName}-nsg-pe'
+    location: location
+    tags: tags
     securityRules: [
       denyLateralTraversalRule
     ]
   }
 }
 
-resource nsgApim 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
-  name: '${baseName}-nsg-apim'
-  location: location
-  tags: tags
-  properties: {
+module nsgApim 'br/public:avm/res/network/network-security-group:0.5.4' = {
+  name: 'nsg-apim'
+  params: {
+    name: '${baseName}-nsg-apim'
+    location: location
+    tags: tags
     securityRules: apimRules
   }
 }
 
-resource nsgLogicApp 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
-  name: '${baseName}-nsg-la'
-  location: location
-  tags: tags
-  properties: {
+module nsgLogicApp 'br/public:avm/res/network/network-security-group:0.5.4' = {
+  name: 'nsg-la'
+  params: {
+    name: '${baseName}-nsg-la'
+    location: location
+    tags: tags
     securityRules: [
       denyLateralTraversalRule
     ]
   }
 }
 
-resource nsgFunctionApp 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
-  name: '${baseName}-nsg-fa'
-  location: location
-  tags: tags
-  properties: {
+module nsgFunctionApp 'br/public:avm/res/network/network-security-group:0.5.4' = {
+  name: 'nsg-fa'
+  params: {
+    name: '${baseName}-nsg-fa'
+    location: location
+    tags: tags
     securityRules: [
       denyLateralTraversalRule
     ]
@@ -200,40 +205,37 @@ resource nsgFunctionApp 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
 // Two route tables: compute subnets force-tunnel everything to the firewall; the APIM subnet does the
 // same but must keep the control-plane path (ApiManagement tag) on the Internet next hop, otherwise
 // the firewall breaks management traffic and the instance ends up unhealthy.
-resource rtApps 'Microsoft.Network/routeTables@2025-05-01' = if (routeViaFirewall) {
-  name: '${baseName}-rt-apps'
-  location: location
-  tags: tags
+var defaultRouteToFirewall = {
+  name: 'default-to-firewall'
   properties: {
+    addressPrefix: '0.0.0.0/0'
+    nextHopType: 'VirtualAppliance'
+    nextHopIpAddress: firewallPrivateIp
+  }
+}
+
+module rtApps 'br/public:avm/res/network/route-table:0.5.0' = if (routeViaFirewall) {
+  name: 'rt-apps'
+  params: {
+    name: '${baseName}-rt-apps'
+    location: location
+    tags: tags
     disableBgpRoutePropagation: false
     routes: [
-      {
-        name: 'default-to-firewall'
-        properties: {
-          addressPrefix: '0.0.0.0/0'
-          nextHopType: 'VirtualAppliance'
-          nextHopIpAddress: firewallPrivateIp
-        }
-      }
+      defaultRouteToFirewall
     ]
   }
 }
 
-resource rtApim 'Microsoft.Network/routeTables@2025-05-01' = if (routeViaFirewall) {
-  name: '${baseName}-rt-apim'
-  location: location
-  tags: tags
-  properties: {
+module rtApim 'br/public:avm/res/network/route-table:0.5.0' = if (routeViaFirewall) {
+  name: 'rt-apim'
+  params: {
+    name: '${baseName}-rt-apim'
+    location: location
+    tags: tags
     disableBgpRoutePropagation: false
     routes: [
-      {
-        name: 'default-to-firewall'
-        properties: {
-          addressPrefix: '0.0.0.0/0'
-          nextHopType: 'VirtualAppliance'
-          nextHopIpAddress: firewallPrivateIp
-        }
-      }
+      defaultRouteToFirewall
       {
         name: 'apim-control-plane-direct'
         properties: {
@@ -246,19 +248,19 @@ resource rtApim 'Microsoft.Network/routeTables@2025-05-01' = if (routeViaFirewal
 }
 
 @description('NSG resource ID for snet-pe.')
-output peNsgId string = nsgPe.id
+output peNsgId string = nsgPe.outputs.resourceId
 
 @description('NSG resource ID for snet-apim.')
-output apimNsgId string = nsgApim.id
+output apimNsgId string = nsgApim.outputs.resourceId
 
 @description('NSG resource ID for snet-la.')
-output logicAppNsgId string = nsgLogicApp.id
+output logicAppNsgId string = nsgLogicApp.outputs.resourceId
 
 @description('NSG resource ID for snet-fa.')
-output functionAppNsgId string = nsgFunctionApp.id
+output functionAppNsgId string = nsgFunctionApp.outputs.resourceId
 
 @description('Route table resource ID for the compute subnets, or empty when no firewall is configured.')
-output appsRouteTableId string = routeViaFirewall ? rtApps.id : ''
+output appsRouteTableId string = routeViaFirewall ? rtApps!.outputs.resourceId : ''
 
 @description('Route table resource ID for the APIM subnet, or empty when no firewall is configured.')
-output apimRouteTableId string = routeViaFirewall ? rtApim.id : ''
+output apimRouteTableId string = routeViaFirewall ? rtApim!.outputs.resourceId : ''

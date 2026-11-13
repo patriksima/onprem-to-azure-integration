@@ -2,6 +2,9 @@
 // projects them into the crm-reporting database. Elastic Premium rather than Flex Consumption because
 // the workload needs regional VNet integration *and* a Windows-free runtime with predictable warm
 // instances; the trade-off is the storage-key workaround explained below.
+// Hand-written on purpose (ADR-009): the site configuration below *is* the design — a keyless,
+// run-from-package host — so the site is a raw resource. The plan and the private endpoint come from AVM;
+// see logicapp.bicep for why AVM's web/site is not used.
 
 @description('Base name, e.g. "mer-int-dev".')
 param baseName string
@@ -61,17 +64,15 @@ param logAnalyticsWorkspaceId string
 var planName = '${baseName}-asp-fa'
 var appName = '${baseName}-fa'
 
-resource plan 'Microsoft.Web/serverfarms@2025-03-01' = {
-  name: planName
-  location: location
-  tags: tags
-  kind: 'elastic'
-  sku: {
-    name: 'EP1'
-    tier: 'ElasticPremium'
-    capacity: planCapacity
-  }
-  properties: {
+module plan 'br/public:avm/res/web/serverfarm:0.7.0' = {
+  name: 'asp-fa'
+  params: {
+    name: planName
+    location: location
+    tags: tags
+    kind: 'elastic'
+    skuName: 'EP1'
+    skuCapacity: planCapacity
     reserved: true
     maximumElasticWorkerCount: maximumElasticWorkerCount
     zoneRedundant: zoneRedundant
@@ -87,7 +88,7 @@ resource functionApp 'Microsoft.Web/sites@2025-03-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    serverFarmId: plan.id
+    serverFarmId: plan.outputs.resourceId
     httpsOnly: true
     publicNetworkAccess: 'Disabled'
     virtualNetworkSubnetId: integrationSubnetId
@@ -128,16 +129,34 @@ resource functionApp 'Microsoft.Web/sites@2025-03-01' = {
   }
 }
 
-module privateEndpoint 'private-endpoint.bicep' = {
-  name: 'pe-${appName}'
+// Same shape as conventions.bicep#privateEndpointFor, spelled out because the standalone module takes the
+// connection explicitly instead of deriving it from a parent resource.
+module privateEndpoint 'br/public:avm/res/network/private-endpoint:0.12.1' = {
+  name: 'pe-fa'
   params: {
     name: '${baseName}-pe-fa'
     location: location
     tags: tags
-    subnetId: peSubnetId
-    privateLinkServiceId: functionApp.id
-    groupId: 'sites'
-    privateDnsZoneId: privateDnsZoneId
+    subnetResourceId: peSubnetId
+    customNetworkInterfaceName: '${baseName}-pe-fa-nic'
+    privateLinkServiceConnections: [
+      {
+        name: '${baseName}-pe-fa'
+        properties: {
+          privateLinkServiceId: functionApp.id
+          groupIds: [ 'sites' ]
+        }
+      }
+    ]
+    privateDnsZoneGroup: {
+      name: 'default'
+      privateDnsZoneGroupConfigs: [
+        {
+          name: 'sites'
+          privateDnsZoneResourceId: privateDnsZoneId
+        }
+      ]
+    }
   }
 }
 

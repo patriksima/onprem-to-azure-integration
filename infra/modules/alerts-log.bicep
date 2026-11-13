@@ -1,6 +1,7 @@
 // Log-search alerts (KQL over Log Analytics) and the optional synthetic availability test.
 // Metric alerts are in alerts.bicep; the split keeps each file reviewable and lets the KQL evolve
-// independently of the metric thresholds.
+// independently of the metric thresholds. The rule, web test and alert resources come from AVM; the
+// queries and thresholds are ours.
 
 @description('Base name, e.g. "mer-int-dev".')
 param baseName string
@@ -86,22 +87,23 @@ var logAlerts = [
   }
 ]
 
-resource logAlertRules 'Microsoft.Insights/scheduledQueryRules@2026-03-01' = [
+module logAlertRules 'br/public:avm/res/insights/scheduled-query-rule:0.6.1' = [
   for alert in logAlerts: {
-    name: '${baseName}-alert-${alert.name}'
-    location: location
-    tags: tags
-    kind: 'LogAlert'
-    properties: {
-      displayName: '${baseName}-alert-${alert.name}'
-      description: alert.description
+    name: 'alert-${alert.name}'
+    params: {
+      name: '${baseName}-alert-${alert.name}'
+      location: location
+      tags: tags
+      kind: 'LogAlert'
+      alertDisplayName: '${baseName}-alert-${alert.name}'
+      alertDescription: alert.description
       severity: alert.severity
       enabled: true
       autoMitigate: true
       scopes: [ logAnalyticsWorkspaceId ]
       evaluationFrequency: alert.frequency
       windowSize: alert.windowSize
-      criteria: {
+      criterias: {
         allOf: [
           {
             query: alert.query
@@ -116,7 +118,7 @@ resource logAlertRules 'Microsoft.Insights/scheduledQueryRules@2026-03-01' = [
         ]
       }
       actions: {
-        actionGroups: [ actionGroupId ]
+        actionGroupResourceIds: [ actionGroupId ]
       }
     }
   }
@@ -126,32 +128,33 @@ resource logAlertRules 'Microsoft.Insights/scheduledQueryRules@2026-03-01' = [
 // Availability test (optional)
 // ---------------------------------------------------------------------------------------------
 
-resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = if (enableAvailabilityTest) {
-  name: '${baseName}-webtest-apim-health'
-  location: location
-  // The hidden-link tag is what associates the test with the App Insights resource.
-  tags: union(tags, { 'hidden-link:${appInsightsId}': 'Resource' })
-  kind: 'standard'
-  properties: {
-    SyntheticMonitorId: '${baseName}-webtest-apim-health'
-    Name: 'APIM health endpoint'
-    Description: 'GET the built-in APIM status endpoint through the gateway.'
-    Enabled: true
-    Frequency: 300
-    Timeout: 30
-    Kind: 'standard'
-    RetryEnabled: true
-    Locations: [
+// The AVM module adds the hidden-link tag that associates the test with the App Insights resource.
+module availabilityTest 'br/public:avm/res/insights/webtest:0.3.2' = if (enableAvailabilityTest) {
+  name: 'webtest-apim-health'
+  params: {
+    name: '${baseName}-webtest-apim-health'
+    location: location
+    tags: tags
+    appInsightResourceId: appInsightsId
+    syntheticMonitorId: '${baseName}-webtest-apim-health'
+    webTestName: 'APIM health endpoint'
+    description: 'GET the built-in APIM status endpoint through the gateway.'
+    kind: 'standard'
+    enabled: true
+    frequency: 300
+    timeout: 30
+    retryEnabled: true
+    locations: [
       { Id: 'emea-nl-ams-azr' }
       { Id: 'emea-gb-db3-azr' }
       { Id: 'emea-fr-pra-edge' }
     ]
-    Request: {
+    request: {
       RequestUrl: '${apimGatewayUrl}/status-0123456789abcdef'
       HttpVerb: 'GET'
       ParseDependentRequests: false
     }
-    ValidationRules: {
+    validationRules: {
       ExpectedHttpStatusCode: 200
       SSLCheck: true
       SSLCertRemainingLifetimeCheck: 14
@@ -159,27 +162,26 @@ resource availabilityTest 'Microsoft.Insights/webtests@2022-06-15' = if (enableA
   }
 }
 
-resource availabilityAlert 'Microsoft.Insights/metricAlerts@2026-01-01' = if (enableAvailabilityTest) {
-  name: '${baseName}-alert-apim-availability'
-  location: 'global'
-  tags: tags
-  properties: {
-    description: 'APIM health endpoint failed from two or more test locations. Partners cannot reach the gateway.'
+module availabilityAlert 'br/public:avm/res/insights/metric-alert:0.4.1' = if (enableAvailabilityTest) {
+  name: 'alert-apim-availability'
+  params: {
+    name: '${baseName}-alert-apim-availability'
+    location: 'global'
+    tags: tags
+    alertDescription: 'APIM health endpoint failed from two or more test locations. Partners cannot reach the gateway.'
     severity: 1
     enabled: true
     autoMitigate: true
-    scopes: [ availabilityTest.id, appInsightsId ]
+    scopes: [ availabilityTest!.outputs.resourceId, appInsightsId ]
     evaluationFrequency: 'PT1M'
     windowSize: 'PT5M'
     criteria: {
       'odata.type': 'Microsoft.Azure.Monitor.WebtestLocationAvailabilityCriteria'
-      webTestId: availabilityTest.id
-      componentId: appInsightsId
+      webTestResourceId: availabilityTest!.outputs.resourceId
+      componentResourceId: appInsightsId
       failedLocationCount: 2
     }
-    actions: [
-      { actionGroupId: actionGroupId }
-    ]
+    actions: [ actionGroupId ]
   }
 }
 
