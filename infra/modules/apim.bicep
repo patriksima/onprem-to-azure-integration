@@ -32,7 +32,8 @@ param apimSubnetId string
 @description('Resource ID of the Application Insights component used for request telemetry.')
 param appInsightsId string
 
-@description('Application Insights connection string.')
+@description('Application Insights connection string for the APIM logger. Marked secure for deployment-history hygiene even though ingestion requires Entra (local auth is disabled).')
+@secure()
 param appInsightsConnectionString string
 
 @description('Name of the Key Vault holding secret named values.')

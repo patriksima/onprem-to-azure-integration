@@ -28,7 +28,7 @@ param seedSecretNames array = []
 param seedSecretPlaceholder string = newGuid()
 
 @description('Object IDs that need Key Vault Secrets User before the apps exist (the Logic App host identity resolves Key Vault references at start-up). App system identities are granted in rbac.bicep.')
-param secretsUserPrincipalIds array = []
+param vaultReaderPrincipalIds array = []
 
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
@@ -80,7 +80,7 @@ resource seedSecrets 'Microsoft.KeyVault/vaults/secrets@2025-05-01' = [
 ]
 
 resource secretsUserRoleAssignments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
-  for principalId in secretsUserPrincipalIds: {
+  for principalId in vaultReaderPrincipalIds: {
     name: guid(keyVault.id, principalId, keyVaultSecretsUserRoleId)
     scope: keyVault
     properties: {

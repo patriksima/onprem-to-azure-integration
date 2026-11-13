@@ -246,7 +246,7 @@ module keyVault 'modules/keyvault.bicep' = {
     seedSecretNames: [
       secretNames.partnerOrdersCallbackSig
     ]
-    secretsUserPrincipalIds: [
+    vaultReaderPrincipalIds: [
       logicAppHostIdentity.outputs.principalId
     ]
   }

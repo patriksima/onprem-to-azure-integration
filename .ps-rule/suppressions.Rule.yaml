@@ -14,12 +14,10 @@ metadata:
 spec:
   rule:
     - Azure.AppService.AvailabilityZone
-    - Azure.APIM.AvailabilityZone
-    - Azure.PublicIP.AvailabilityZone
   if:
     name: '.'
     contains:
-      - '-dev-'
+      - '-dev-asp-'
 ---
 apiVersion: github.com/microsoft/PSRule/v1
 kind: SuppressionGroup
@@ -50,8 +48,8 @@ spec:
     - Azure.APIM.AvailabilityZone
     - Azure.APIM.MultiRegion
   if:
-    type: '.'
-    equals: Microsoft.ApiManagement/service
+    name: '.'
+    endsWith: -apim
 ---
 apiVersion: github.com/microsoft/PSRule/v1
 kind: SuppressionGroup
@@ -101,5 +99,5 @@ spec:
   rule:
     - Azure.Log.Replication
   if:
-    type: '.'
-    equals: Microsoft.OperationalInsights/workspaces
+    name: '.'
+    endsWith: -law
