@@ -72,7 +72,7 @@ var databaseName = 'crm-reporting'
 // so provisioned SKUs get the "disabled" values (-1 / 0) rather than null.
 var isServerless = contains(databaseSku.name, '_S_')
 
-module sqlServer 'br/public:avm/res/sql/server:0.22.1' = {
+module sqlServer 'br/public:avm/res/sql/server:0.23.0' = {
   name: 'sql'
   params: {
     name: serverName

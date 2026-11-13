@@ -1,7 +1,7 @@
 // Function App (.NET 10 isolated, Linux, Elastic Premium) that consumes the Event Hubs streams and
-// projects them into the crm-reporting database. Elastic Premium rather than Flex Consumption because
-// the workload needs regional VNet integration *and* a Windows-free runtime with predictable warm
-// instances; the trade-off is the storage-key workaround explained below.
+// projects them into the crm-reporting database. Elastic Premium because the workload needs regional
+// VNet integration, private endpoints and pre-warmed instances. Fully keyless: no Azure Files content
+// share, so the code runs from a package blob that the app's identity reads (explained below).
 // Hand-written on purpose (ADR-009): the site configuration below *is* the design — a keyless,
 // run-from-package host — so the site is a raw resource. The plan and the private endpoint come from AVM;
 // see logicapp.bicep for why AVM's web/site is not used.

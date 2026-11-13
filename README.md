@@ -65,8 +65,10 @@ Target architecture in detail, with the network layout and the end-to-end data f
 docs/                 CAF-structured documentation (strategy → plan → ready → adopt → operate → evaluate)
 docs/adr/             architecture decision records
 infra/main.bicep      resource-group deployment, wires the modules
-infra/modules/        network · network-security · private-dns · private-endpoint · monitoring · identity · keyvault
-                      storage · eventhubs · sql · logicapp · functionapp · apim · apim-api · rbac · alerts · alerts-log
+infra/modules/        thin wrappers over Azure Verified Modules: network · network-security · monitoring · keyvault
+                      storage · eventhubs · sql · apim · alerts · alerts-log
+                      hand-written where the configuration is the decision: logicapp · functionapp · apim-api · rbac
+infra/AVM.md          pinned AVM versions, what each replaced, behaviour notes
 infra/params/         dev.bicepparam · prod.bicepparam
 infra/apim/policies/  APIM policy for the partner API
 infra/bicepconfig.json  linter rules
