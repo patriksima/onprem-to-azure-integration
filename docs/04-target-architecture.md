@@ -26,7 +26,7 @@ flowchart TB
             APIM["API Management<br/>internal mode"]
         end
         subgraph snetfa["snet-fa"]
-            FA["Function App (.NET 8 isolated, EP1)<br/>reporting-consumer<br/>notifications-consumer"]
+            FA["Function App (.NET 10 isolated, EP1)<br/>reporting-consumer<br/>notifications-consumer"]
         end
         subgraph snetla["snet-la"]
             LA["Logic Apps Standard (WS1)<br/>partner-stock-import<br/>partner-order-export<br/>poison-handler"]
@@ -67,7 +67,7 @@ flowchart TB
 | Component | Choice | SKU dev / prod | Why this and not the alternative |
 |---|---|---|---|
 | Event backbone | **Event Hubs Standard, Kafka endpoint** | Standard 1 TU auto-inflate to 4 / Standard 2 TU, zone-redundant | Kafka protocol compatibility means the on-prem publisher changes config, not code. Premium/Dedicated is unjustifiable at 270 KB/s. Service Bus was considered and rejected for this layer — see [ADR-001](adr/ADR-001-event-hubs-instead-of-kafka.md) and [ADR-006](adr/ADR-006-no-service-bus-in-wave-1.md). |
-| Event consumers | **Azure Functions, .NET 8 isolated** | Elastic Premium EP1 / EP1, 1–3 instances | Event Hubs trigger with checkpointing, scale per partition, VNet integration (Consumption plan cannot do private endpoints). Logic Apps rejected for high-frequency per-event processing: cost per action and cold path. |
+| Event consumers | **Azure Functions, .NET 10 isolated** | Elastic Premium EP1 / EP1, 1–3 instances | Event Hubs trigger with checkpointing, scale per partition, VNet integration (Consumption plan cannot do private endpoints). Logic Apps rejected for high-frequency per-event processing: cost per action and cold path. |
 | Partner orchestration | **Logic Apps Standard** | WS1 / WS1 | Per-partner workflows with retries, run history visible to support staff, built-in connectors for SFTP (transition) and HTTP. Stateful runs give an audit trail per partner exchange that a Function would have to build. [ADR-002](adr/ADR-002-functions-and-logic-apps-split.md) |
 | API façade for partners | **API Management, internal VNet** | Developer / Premium 1 unit | Subscription keys per partner, rate limits, versioning, one place to change the backend when the CRM is replaced. Developer tier in dev because it is the cheapest tier with VNet support; v2 tiers evaluated and parked ([ADR-003](adr/ADR-003-apim-as-partner-facade.md)). |
 | Reporting database | **Azure SQL Database, General Purpose** | GP serverless 1 vCore / GP 2 vCore zone-redundant | Single database, no SQL Agent or cross-DB dependencies after the ETL job is retired. Managed Instance would cost 3× for features nobody uses. [ADR-004](adr/ADR-004-sql-migration-order.md) |

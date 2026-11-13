@@ -24,7 +24,7 @@ The team is .NET-fluent. Two engineers have Logic Apps experience, four have C#.
 
 **Option 3.**
 
-- **Functions (.NET 8 isolated, Elastic Premium EP1):** `reporting-consumer`, `notifications-consumer`. Event Hubs trigger, batch processing, idempotency in code, unit tests with the host in-process.
+- **Functions (.NET 10 isolated, Elastic Premium EP1):** `reporting-consumer`, `notifications-consumer`. Event Hubs trigger, batch processing, idempotency in code, unit tests with the host in-process.
 - **Logic Apps Standard (WS1):** `partner-order-export`, `partner-stock-import` (one workflow per partner, generated from a template), `poison-handler`. Stateful, Event Hubs built-in trigger (split-on), HTTP actions with retry policy, run history retained 90 days.
 
 Both run on plans that support VNet integration; the Consumption tiers of either were rejected for that reason alone.
