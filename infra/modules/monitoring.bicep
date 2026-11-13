@@ -29,51 +29,59 @@ param alertEmailReceivers array
 @maxLength(12)
 param actionGroupShortName string
 
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2025-02-01' = {
-  name: '${baseName}-law'
-  location: location
-  tags: tags
-  properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: logRetentionInDays
-    workspaceCapping: {
-      dailyQuotaGb: dailyQuotaGb
-    }
+module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.16.1' = {
+  name: 'law'
+  params: {
+    name: '${baseName}-law'
+    location: location
+    tags: tags
+    skuName: 'PerGB2018'
+    dataRetention: logRetentionInDays
+    dailyQuotaGb: string(dailyQuotaGb)
     features: {
       // Workspace-level RBAC: a reader on the Function App resource sees only that app's logs.
       enableLogAccessUsingOnlyResourcePermissions: true
+      // No shared-key ingestion (Data Collector API / legacy agents); every producer here goes through
+      // diagnostic settings or App Insights, both of which authenticate with Entra.
+      disableLocalAuth: true
     }
     // Ingestion stays on public endpoints: the apps egress through the hub firewall and
     // Azure Monitor Private Link Scope is a landing-zone concern, not a workload one.
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
+    // No customer-managed storage for saved queries; keep the platform default rather than AVM's.
+    forceCmkForQuery: false
   }
 }
 
-resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
-  name: '${baseName}-appi'
-  location: location
-  tags: tags
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
-    WorkspaceResourceId: logAnalytics.id
-    IngestionMode: 'LogAnalytics'
+module appInsights 'br/public:avm/res/insights/component:0.8.0' = {
+  name: 'appi'
+  params: {
+    name: '${baseName}-appi'
+    location: location
+    tags: tags
+    kind: 'web'
+    applicationType: 'web'
+    workspaceResourceId: logAnalytics.outputs.resourceId
+    ingestionMode: 'LogAnalytics'
     // Local (instrumentation-key) auth is off; every producer authenticates with its managed
     // identity and the Monitoring Metrics Publisher role (see rbac.bicep and the APIM logger).
-    DisableLocalAuth: true
+    disableLocalAuth: true
+    // Keep client IPs masked (platform default); AVM would unmask them.
+    disableIpMasking: false
+    // Retention is governed by the workspace; 90 is the component default and kept explicit.
+    retentionInDays: 90
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
   }
 }
 
-resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
-  name: '${baseName}-ag'
-  location: 'global'
-  tags: tags
-  properties: {
+module actionGroup 'br/public:avm/res/insights/action-group:0.8.0' = {
+  name: 'ag'
+  params: {
+    name: '${baseName}-ag'
+    location: 'global'
+    tags: tags
     groupShortName: actionGroupShortName
     enabled: true
     emailReceivers: [
@@ -87,19 +95,19 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
 }
 
 @description('Resource ID of the Log Analytics workspace.')
-output logAnalyticsWorkspaceId string = logAnalytics.id
+output logAnalyticsWorkspaceId string = logAnalytics.outputs.resourceId
 
 @description('Name of the Log Analytics workspace.')
-output logAnalyticsWorkspaceName string = logAnalytics.name
+output logAnalyticsWorkspaceName string = logAnalytics.outputs.name
 
 @description('Resource ID of the Application Insights component.')
-output appInsightsId string = appInsights.id
+output appInsightsId string = appInsights.outputs.resourceId
 
 @description('Name of the Application Insights component.')
-output appInsightsName string = appInsights.name
+output appInsightsName string = appInsights.outputs.name
 
 @description('Application Insights connection string. Not a secret (ingestion requires Entra auth), but treat as configuration.')
-output appInsightsConnectionString string = appInsights.properties.ConnectionString
+output appInsightsConnectionString string = appInsights.outputs.connectionString
 
 @description('Resource ID of the action group.')
-output actionGroupId string = actionGroup.id
+output actionGroupId string = actionGroup.outputs.resourceId

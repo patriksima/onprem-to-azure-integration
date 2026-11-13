@@ -2,6 +2,10 @@
 // Logic Apps Standard, Azure Functions, Azure SQL and API Management, inside a landing-zone spoke.
 // Resource-group scope; the hub (gateway, firewall) is referenced, never created.
 //
+// Commodity resources come from Azure Verified Modules (pinned; see AVM.md). The modules under
+// modules/ either compose AVM modules with this workload's conventions, or are hand-written where the
+// configuration itself is the design (logicapp, functionapp, apim-api) - see ADR-009.
+//
 // Deployment order is driven by data dependencies only; no artificial dependsOn:
 //   network -> monitoring -> identity -> keyvault -> storage -> eventhubs/sql -> apps -> apim -> rbac -> alerts
 
@@ -99,14 +103,14 @@ param storageSkuName string = 'Standard_ZRS'
 // Event Hubs
 // ---------------------------------------------------------------------------------------------
 
-@description('Base throughput units for the Event Hubs namespace.')
+@description('Base throughput units for the Event Hubs namespace (the AVM module caps it at 20).')
 @minValue(1)
-@maxValue(40)
+@maxValue(20)
 param eventHubsCapacity int = 1
 
-@description('Auto-inflate ceiling for the Event Hubs namespace.')
+@description('Auto-inflate ceiling for the Event Hubs namespace (the AVM module caps it at 20).')
 @minValue(1)
-@maxValue(40)
+@maxValue(20)
 param eventHubsMaximumThroughputUnits int = 4
 
 @description('Zone-redundant Event Hubs namespace.')
@@ -196,6 +200,10 @@ var secretNames = {
 
 var logicAppContentShareName = 'logicapp-content'
 
+// network.bicep returns the zones as { service, resourceId } pairs; fold them into a map keyed by service
+// (servicebus, sql, keyvault, blob, file, queue, table, sites).
+var privateDnsZoneIds = toObject(network.outputs.privateDnsZones, zone => zone.service, zone => zone.resourceId)
+
 // ---------------------------------------------------------------------------------------------
 // Modules
 // ---------------------------------------------------------------------------------------------
@@ -225,7 +233,10 @@ module monitoring 'modules/monitoring.bicep' = {
   }
 }
 
-module logicAppHostIdentity 'modules/identity.bicep' = {
+// User-assigned identity for the Logic App host. The Logic App's own system-assigned identity cannot
+// exist before the app does, but the host needs storage data-plane roles at first start. A user-assigned
+// identity breaks that chicken-and-egg: it is created first, granted roles, and then attached to the app.
+module logicAppHostIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = {
   name: 'identity-la-host'
   params: {
     name: '${baseName}-id-la-host'
@@ -241,7 +252,7 @@ module keyVault 'modules/keyvault.bicep' = {
     location: location
     tags: tags
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneId: network.outputs.privateDnsZoneIds.keyvault
+    privateDnsZoneId: privateDnsZoneIds.keyvault
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     seedSecretNames: [
       secretNames.partnerOrdersCallbackSig
@@ -263,11 +274,16 @@ module logicAppStorage 'modules/storage.bicep' = {
     // Workflow Service Plan mounts Azure Files with a key; see storage.bicep for the reasoning.
     allowSharedKeyAccess: true
     fileShareName: logicAppContentShareName
+    // The share's connection string goes straight into Key Vault; the Logic App reads it by reference.
+    connectionStringExport: {
+      keyVaultResourceId: keyVault.outputs.id
+      secretName: secretNames.logicAppContentShare
+    }
     hostIdentityPrincipalIds: [
       logicAppHostIdentity.outputs.principalId
     ]
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneIds: network.outputs.privateDnsZoneIds
+    privateDnsZoneIds: privateDnsZoneIds
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
@@ -286,17 +302,8 @@ module functionAppStorage 'modules/storage.bicep' = {
       'deployments'
     ]
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneIds: network.outputs.privateDnsZoneIds
+    privateDnsZoneIds: privateDnsZoneIds
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
-  }
-}
-
-module logicAppContentShareSecret 'modules/storage-key-secret.bicep' = {
-  name: 'secret-la-content-share'
-  params: {
-    storageAccountName: logicAppStorage.outputs.name
-    keyVaultName: keyVault.outputs.name
-    secretName: secretNames.logicAppContentShare
   }
 }
 
@@ -311,7 +318,7 @@ module eventHubs 'modules/eventhubs.bicep' = {
     zoneRedundant: eventHubsZoneRedundant
     onPremProducerObjectId: onPremProducerObjectId
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneId: network.outputs.privateDnsZoneIds.servicebus
+    privateDnsZoneId: privateDnsZoneIds.servicebus
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
@@ -329,7 +336,7 @@ module sql 'modules/sql.bicep' = {
     zoneRedundant: sqlZoneRedundant
     backupStorageRedundancy: sqlBackupStorageRedundancy
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneId: network.outputs.privateDnsZoneIds.sql
+    privateDnsZoneId: privateDnsZoneIds.sql
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
@@ -344,13 +351,13 @@ module logicApp 'modules/logicapp.bicep' = {
     zoneRedundant: appPlanZoneRedundant
     integrationSubnetId: network.outputs.logicAppSubnetId
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneId: network.outputs.privateDnsZoneIds.sites
+    privateDnsZoneId: privateDnsZoneIds.sites
     storageBlobEndpoint: logicAppStorage.outputs.blobEndpoint
     storageQueueEndpoint: logicAppStorage.outputs.queueEndpoint
     storageTableEndpoint: logicAppStorage.outputs.tableEndpoint
-    hostIdentityId: logicAppHostIdentity.outputs.id
+    hostIdentityId: logicAppHostIdentity.outputs.resourceId
     contentShareName: logicAppContentShareName
-    contentShareConnectionSecretUri: logicAppContentShareSecret.outputs.secretUri
+    contentShareConnectionSecretUri: logicAppStorage.outputs.connectionStringSecretUri
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     eventHubsFullyQualifiedNamespace: eventHubs.outputs.fullyQualifiedNamespace
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
@@ -367,7 +374,7 @@ module functionApp 'modules/functionapp.bicep' = {
     zoneRedundant: appPlanZoneRedundant
     integrationSubnetId: network.outputs.functionAppSubnetId
     peSubnetId: network.outputs.peSubnetId
-    privateDnsZoneId: network.outputs.privateDnsZoneIds.sites
+    privateDnsZoneId: privateDnsZoneIds.sites
     storageAccountName: functionAppStorage.outputs.name
     storageBlobEndpoint: functionAppStorage.outputs.blobEndpoint
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString

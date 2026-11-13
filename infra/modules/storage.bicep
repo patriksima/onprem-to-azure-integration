@@ -1,6 +1,9 @@
 // Host storage account for an App Service-based runtime (Function App or Logic App Standard).
 // One account per app: the Functions host uses blob leases, queues and tables for coordination, and
 // sharing an account between two hosts is a documented way to get cross-talk and lock contention.
+// The account comes from AVM; the key decision here is allowSharedKeyAccess (see below).
+
+import { privateEndpointFor, diagnosticsToLaw, roleAssignmentFor } from 'conventions.bicep'
 
 @description('Base name, e.g. "mer-int-dev". Hyphens are stripped because storage names allow only lowercase alphanumerics.')
 param baseName string
@@ -34,6 +37,10 @@ param containerNames array = []
 @description('Name of an Azure Files share to create for App Service content. Empty to skip.')
 param fileShareName string = ''
 
+@description('''Key Vault that receives the account connection string, as { keyVaultResourceId, secretName }. Empty to skip.
+Needed only for the Logic App Standard content share: Azure Files has no identity-based auth, so WEBSITE_CONTENTAZUREFILECONNECTIONSTRING must be a real connection string. Writing it straight into Key Vault (the AVM module reads the key with listKeys() inside the deployment) and referencing it from the app keeps the key out of app settings, parameters and deployment history.''')
+param connectionStringExport object = {}
+
 @description('Object IDs of managed identities that must have data-plane access before the host starts (Logic App user-assigned identity). Function App system identity is granted in rbac.bicep after creation.')
 param hostIdentityPrincipalIds array = []
 
@@ -51,12 +58,12 @@ var storageAccountName = take('${replace(baseName, '-', '')}${roleSuffix}${uniqu
 
 // The Functions/Logic Apps host needs all four: blobs for leases and secrets, queues for scheduling,
 // tables for stateful workflow state, and account-level read for the host's capability discovery.
-var hostRoleDefinitionIds = {
-  storageAccountContributor: '17d1049b-9a84-46fb-8f53-869881c3d3ab'
-  storageBlobDataOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
-  storageQueueDataContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
-  storageTableDataContributor: '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
-}
+var hostRoleDefinitionIds = [
+  '17d1049b-9a84-46fb-8f53-869881c3d3ab' // Storage Account Contributor
+  'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' // Storage Blob Data Owner
+  '974c5e8b-45b9-4653-ba55-5f855dd0fb88' // Storage Queue Data Contributor
+  '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3' // Storage Table Data Contributor
+]
 
 var privateEndpointGroups = [
   'blob'
@@ -65,15 +72,16 @@ var privateEndpointGroups = [
   'table'
 ]
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = {
-  name: storageAccountName
-  location: location
-  tags: tags
-  kind: 'StorageV2'
-  sku: {
-    name: skuName
-  }
-  properties: {
+var exportConnectionString = !empty(connectionStringExport)
+
+module storageAccount 'br/public:avm/res/storage/storage-account:0.33.1' = {
+  name: 'st-${roleSuffix}'
+  params: {
+    name: storageAccountName
+    location: location
+    tags: tags
+    kind: 'StorageV2'
+    skuName: skuName
     accessTier: 'Hot'
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
@@ -86,142 +94,78 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-01-01' = {
       defaultAction: 'Deny'
       bypass: 'AzureServices'
     }
-    encryption: {
-      keySource: 'Microsoft.Storage'
-      requireInfrastructureEncryption: true
-      services: {
-        blob: { enabled: true, keyType: 'Account' }
-        file: { enabled: true, keyType: 'Account' }
-        queue: { enabled: true, keyType: 'Account' }
-        table: { enabled: true, keyType: 'Account' }
+    requireInfrastructureEncryption: true
+    blobServices: {
+      // Soft delete covers the "someone purged poison-messages before we replayed them" scenario.
+      deleteRetentionPolicyEnabled: true
+      deleteRetentionPolicyDays: 14
+      containerDeleteRetentionPolicyEnabled: true
+      containerDeleteRetentionPolicyDays: 14
+      containers: [
+        for containerName in containerNames: {
+          name: containerName
+          publicAccess: 'None'
+        }
+      ]
+      // Blob-level: StorageBlobLogs feeds the poison-message alert in alerts-log.bicep.
+      diagnosticSettings: [
+        diagnosticsToLaw(logAnalyticsWorkspaceId, [{ categoryGroup: 'allLogs' }], [{ category: 'Transaction' }])
+      ]
+    }
+    fileServices: {
+      shareDeleteRetentionPolicy: {
+        enabled: true
+        days: 14
       }
+      shares: empty(fileShareName)
+        ? []
+        : [
+            {
+              name: fileShareName
+              accessTier: 'TransactionOptimized'
+            }
+          ]
     }
-  }
-}
-
-resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2025-01-01' = {
-  parent: storageAccount
-  name: 'default'
-  properties: {
-    // Soft delete covers the "someone purged poison-messages before we replayed them" scenario.
-    deleteRetentionPolicy: { enabled: true, days: 14 }
-    containerDeleteRetentionPolicy: { enabled: true, days: 14 }
-  }
-}
-
-resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2025-01-01' = [
-  for containerName in containerNames: {
-    parent: blobServices
-    name: containerName
-    properties: {
-      publicAccess: 'None'
+    queueServices: {
+      diagnosticSettings: [
+        diagnosticsToLaw(logAnalyticsWorkspaceId, [{ categoryGroup: 'allLogs' }], [])
+      ]
     }
-  }
-]
-
-resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2025-01-01' = {
-  parent: storageAccount
-  name: 'default'
-  properties: {
-    shareDeleteRetentionPolicy: { enabled: true, days: 14 }
-  }
-}
-
-resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2025-01-01' = if (!empty(fileShareName)) {
-  parent: fileServices
-  name: fileShareName
-  properties: {
-    accessTier: 'TransactionOptimized'
-  }
-}
-
-resource hostRoleAssignments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
-  for pair in flatten(map(hostIdentityPrincipalIds, principalId => map(items(hostRoleDefinitionIds), role => { principalId: principalId, roleId: role.value }))): {
-    name: guid(storageAccount.id, pair.principalId, pair.roleId)
-    scope: storageAccount
-    properties: {
-      principalId: pair.principalId
-      principalType: 'ServicePrincipal'
-      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', pair.roleId)
-    }
-  }
-]
-
-module privateEndpoints 'private-endpoint.bicep' = [
-  for groupId in privateEndpointGroups: {
-    name: 'pe-${storageAccountName}-${groupId}'
-    params: {
-      name: '${baseName}-pe-st${roleSuffix}-${groupId}'
-      location: location
-      tags: tags
-      subnetId: peSubnetId
-      privateLinkServiceId: storageAccount.id
-      groupId: groupId
-      privateDnsZoneId: privateDnsZoneIds[groupId]
-    }
-  }
-]
-
-// Account-level: metrics only (the account has no log categories).
-// 2021-05-01-preview is the only diagnostic-settings API with categoryGroup support; the GA 2016-09-01 lacks it.
-#disable-next-line use-recent-api-versions
-resource accountDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'to-law'
-  scope: storageAccount
-  properties: {
-    workspaceId: logAnalyticsWorkspaceId
-    metrics: [
-      { category: 'Transaction', enabled: true }
+    roleAssignments: [
+      for pair in flatten(map(hostIdentityPrincipalIds, principalId => map(hostRoleDefinitionIds, roleId => { principalId: principalId, roleId: roleId }))): roleAssignmentFor(pair.principalId, pair.roleId)
     ]
-  }
-}
-
-// Blob-level: StorageBlobLogs feeds the poison-message alert in alerts.bicep.
-// 2021-05-01-preview is the only diagnostic-settings API with categoryGroup support; the GA 2016-09-01 lacks it.
-#disable-next-line use-recent-api-versions
-resource blobDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'to-law'
-  scope: blobServices
-  properties: {
-    workspaceId: logAnalyticsWorkspaceId
-    logs: [
-      { categoryGroup: 'allLogs', enabled: true }
+    privateEndpoints: [
+      for groupId in privateEndpointGroups: privateEndpointFor('${baseName}-pe-st${roleSuffix}-${groupId}', peSubnetId, groupId, privateDnsZoneIds[groupId], location, tags)
     ]
-    metrics: [
-      { category: 'Transaction', enabled: true }
+    // Account-level: metrics only (the account has no log categories).
+    diagnosticSettings: [
+      diagnosticsToLaw(logAnalyticsWorkspaceId, [], [{ category: 'Transaction' }])
     ]
+    secretsExportConfiguration: exportConnectionString
+      ? {
+          keyVaultResourceId: connectionStringExport.keyVaultResourceId
+          connectionString1Name: connectionStringExport.secretName
+        }
+      : null
   }
-}
-
-// 2021-05-01-preview is the only diagnostic-settings API with categoryGroup support; the GA 2016-09-01 lacks it.
-#disable-next-line use-recent-api-versions
-resource queueDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'to-law'
-  scope: queueServices
-  properties: {
-    workspaceId: logAnalyticsWorkspaceId
-    logs: [
-      { categoryGroup: 'allLogs', enabled: true }
-    ]
-  }
-}
-
-resource queueServices 'Microsoft.Storage/storageAccounts/queueServices@2025-01-01' existing = {
-  parent: storageAccount
-  name: 'default'
 }
 
 @description('Resource ID of the storage account.')
-output id string = storageAccount.id
+output id string = storageAccount.outputs.resourceId
 
 @description('Name of the storage account.')
-output name string = storageAccount.name
+output name string = storageAccount.outputs.name
 
 @description('Primary blob endpoint, e.g. https://name.blob.core.windows.net/.')
-output blobEndpoint string = storageAccount.properties.primaryEndpoints.blob
+// Endpoints derived from the account name and the cloud's storage suffix — known before deployment and
+// independent of runtime properties (see sql.bicep for the same reasoning).
+output blobEndpoint string = 'https://${storageAccount.outputs.name}.blob.${environment().suffixes.storage}/'
 
 @description('Primary queue endpoint.')
-output queueEndpoint string = storageAccount.properties.primaryEndpoints.queue
+output queueEndpoint string = 'https://${storageAccount.outputs.name}.queue.${environment().suffixes.storage}/'
 
 @description('Primary table endpoint.')
-output tableEndpoint string = storageAccount.properties.primaryEndpoints.table
+output tableEndpoint string = 'https://${storageAccount.outputs.name}.table.${environment().suffixes.storage}/'
+
+@description('Versionless URI of the connection-string secret (for Key Vault references that follow rotation), or empty when no secret was requested.')
+output connectionStringSecretUri string = exportConnectionString ? storageAccount.outputs.exportedSecrets[connectionStringExport.secretName].secretUri : ''

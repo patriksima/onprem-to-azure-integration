@@ -1,6 +1,12 @@
 // Logic App Standard that hosts the partner-facing orchestration workflows (receives the APIM-fronted
 // partner order, enriches it from Event Hubs state, calls the Function App). Single-tenant so it can
 // sit in the VNet and talk to private endpoints only.
+// Hand-written on purpose (ADR-009): the site configuration below *is* the design — identity-based host
+// storage plus a Key Vault reference for the one share that still needs a key — so the site is a raw
+// resource. The plan and the private endpoint come from AVM. AVM's web/site was considered and not used:
+// it would save about ten lines of plumbing, but it compiles to ~680 KB per instance (slots, extensions
+// and config children) and puts the site one nested deployment deeper in what-if output, which is
+// exactly where a reviewer wants to see the app settings side by side with the raw resource.
 
 @description('Base name, e.g. "mer-int-dev".')
 param baseName string
@@ -58,17 +64,15 @@ param logAnalyticsWorkspaceId string
 var planName = '${baseName}-asp-la'
 var appName = '${baseName}-la'
 
-resource plan 'Microsoft.Web/serverfarms@2025-03-01' = {
-  name: planName
-  location: location
-  tags: tags
-  kind: 'elastic'
-  sku: {
-    name: 'WS1'
-    tier: 'WorkflowStandard'
-    capacity: planCapacity
-  }
-  properties: {
+module plan 'br/public:avm/res/web/serverfarm:0.7.0' = {
+  name: 'asp-la'
+  params: {
+    name: planName
+    location: location
+    tags: tags
+    kind: 'elastic'
+    skuName: 'WS1'
+    skuCapacity: planCapacity
     // Logic Apps Standard runs on Windows plans only.
     reserved: false
     maximumElasticWorkerCount: 20
@@ -91,7 +95,7 @@ resource logicApp 'Microsoft.Web/sites@2025-03-01' = {
     }
   }
   properties: {
-    serverFarmId: plan.id
+    serverFarmId: plan.outputs.resourceId
     httpsOnly: true
     publicNetworkAccess: 'Disabled'
     virtualNetworkSubnetId: integrationSubnetId
@@ -141,16 +145,34 @@ resource logicApp 'Microsoft.Web/sites@2025-03-01' = {
   }
 }
 
-module privateEndpoint 'private-endpoint.bicep' = {
-  name: 'pe-${appName}'
+// Same shape as conventions.bicep#privateEndpointFor, spelled out because the standalone module takes the
+// connection explicitly instead of deriving it from a parent resource.
+module privateEndpoint 'br/public:avm/res/network/private-endpoint:0.12.1' = {
+  name: 'pe-la'
   params: {
     name: '${baseName}-pe-la'
     location: location
     tags: tags
-    subnetId: peSubnetId
-    privateLinkServiceId: logicApp.id
-    groupId: 'sites'
-    privateDnsZoneId: privateDnsZoneId
+    subnetResourceId: peSubnetId
+    customNetworkInterfaceName: '${baseName}-pe-la-nic'
+    privateLinkServiceConnections: [
+      {
+        name: '${baseName}-pe-la'
+        properties: {
+          privateLinkServiceId: logicApp.id
+          groupIds: [ 'sites' ]
+        }
+      }
+    ]
+    privateDnsZoneGroup: {
+      name: 'default'
+      privateDnsZoneGroupConfigs: [
+        {
+          name: 'sites'
+          privateDnsZoneResourceId: privateDnsZoneId
+        }
+      ]
+    }
   }
 }
 

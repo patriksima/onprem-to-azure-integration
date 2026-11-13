@@ -1,6 +1,9 @@
 // Event Hubs namespace that replaces the on-prem Kafka cluster. Kafka protocol stays enabled so the
 // existing producers (and MirrorMaker 2 during the cut-over) keep working without code changes;
-// only the bootstrap server and SASL mechanism change.
+// only the bootstrap server and SASL mechanism change. The namespace comes from AVM; the hub and
+// consumer-group layout and the no-SAS posture are ours.
+
+import { privateEndpointFor, diagnosticsToLaw, roleAssignmentFor } from 'conventions.bicep'
 
 @description('Base name, e.g. "mer-int-dev".')
 @minLength(6)
@@ -12,14 +15,14 @@ param location string
 @description('Resource tags.')
 param tags object
 
-@description('Throughput units for the Standard namespace. Auto-inflate scales up to maximumThroughputUnits.')
+@description('Throughput units for the Standard namespace. Auto-inflate scales up to maximumThroughputUnits. The AVM module caps both at 20.')
 @minValue(1)
-@maxValue(40)
+@maxValue(20)
 param capacity int = 1
 
-@description('Upper bound for auto-inflate.')
+@description('Upper bound for auto-inflate. The AVM module caps this at 20 (Standard allows 40 through the portal); raise it there first if the workload ever needs more.')
 @minValue(1)
-@maxValue(40)
+@maxValue(20)
 param maximumThroughputUnits int = 4
 
 @description('Zone redundancy. Standard namespaces in AZ-enabled regions are zone-redundant; set true where supported.')
@@ -66,112 +69,75 @@ var consumerGroupNames = [
 
 var eventHubsDataSenderRoleId = '2b629674-e913-4c01-ae53-ef4638d8f975'
 
-resource namespace 'Microsoft.EventHub/namespaces@2026-01-01' = {
-  name: namespaceName
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard'
-    tier: 'Standard'
-    capacity: capacity
-  }
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
+module namespace 'br/public:avm/res/event-hub/namespace:0.15.2' = {
+  name: 'evh'
+  params: {
+    name: namespaceName
+    location: location
+    tags: tags
+    skuName: 'Standard'
+    skuCapacity: capacity
+    zoneRedundant: zoneRedundant
     kafkaEnabled: true
     isAutoInflateEnabled: true
     maximumThroughputUnits: maximumThroughputUnits
     minimumTlsVersion: '1.2'
-    publicNetworkAccess: 'Disabled'
-    // No SAS keys anywhere: Function App, Logic App and the on-prem producer all use Entra tokens
-    // (Kafka clients via OAUTHBEARER).
-    disableLocalAuth: true
-    zoneRedundant: zoneRedundant
-  }
-}
-
-// With public access disabled the network rule set only needs to confirm the default action; the
-// private endpoint is the sole entry point.
-resource networkRules 'Microsoft.EventHub/namespaces/networkRuleSets@2026-01-01' = {
-  parent: namespace
-  name: 'default'
-  properties: {
-    publicNetworkAccess: 'Disabled'
-    defaultAction: 'Deny'
-    trustedServiceAccessEnabled: true
-  }
-}
-
-resource eventHubs 'Microsoft.EventHub/namespaces/eventhubs@2026-01-01' = [
-  for hubName in eventHubNames: {
-    parent: namespace
-    name: hubName
-    properties: {
-      partitionCount: partitionCount
-      messageRetentionInDays: messageRetentionInDays
-      status: 'Active'
+    managedIdentities: {
+      systemAssigned: true
     }
-  }
-]
-
-// Cross product hubs x consumer groups, flattened so each is a stable, individually addressable resource.
-var hubConsumerGroupPairs = flatten(map(range(0, length(eventHubNames)), hubIndex => map(consumerGroupNames, cg => { hubIndex: hubIndex, consumerGroup: cg })))
-
-resource consumerGroups 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2026-01-01' = [
-  for pair in hubConsumerGroupPairs: {
-    parent: eventHubs[pair.hubIndex]
-    name: pair.consumerGroup
-  }
-]
-
-resource producerSenderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(onPremProducerObjectId)) {
-  name: guid(namespace.id, onPremProducerObjectId, eventHubsDataSenderRoleId)
-  scope: namespace
-  properties: {
-    principalId: onPremProducerObjectId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataSenderRoleId)
+    // No SAS keys anywhere: Function App, Logic App and the on-prem producer all use Entra tokens
+    // (Kafka clients via OAUTHBEARER). The empty rule lists stop AVM from declaring the default
+    // RootManageSharedAccessKey rules on the namespace and on every hub.
+    disableLocalAuth: true
+    authorizationRules: []
+    publicNetworkAccess: 'Disabled'
+    // With public access disabled the network rule set only needs to confirm the default action; the
+    // private endpoint is the sole entry point.
+    networkRuleSets: {
+      publicNetworkAccess: 'Disabled'
+      defaultAction: 'Deny'
+      trustedServiceAccessEnabled: true
+    }
+    eventhubs: [
+      for hubName in eventHubNames: {
+        name: hubName
+        partitionCount: partitionCount
+        messageRetentionInDays: messageRetentionInDays
+        status: 'Active'
+        authorizationRules: []
+        // map() rather than a for-expression: Bicep does not allow a for inside a for-body property.
+        consumergroups: map(consumerGroupNames, consumerGroupName => { name: consumerGroupName })
+      }
+    ]
+    roleAssignments: empty(onPremProducerObjectId)
+      ? []
+      : [
+          roleAssignmentFor(onPremProducerObjectId, eventHubsDataSenderRoleId)
+        ]
+    privateEndpoints: [
+      privateEndpointFor('${baseName}-pe-evh', peSubnetId, 'namespace', privateDnsZoneId, location, tags)
+    ]
+    diagnosticSettings: [
+      diagnosticsToLaw(logAnalyticsWorkspaceId, [], [])
+    ]
   }
 }
 
-module privateEndpoint 'private-endpoint.bicep' = {
-  name: 'pe-${namespaceName}'
-  params: {
-    name: '${baseName}-pe-evh'
-    location: location
-    tags: tags
-    subnetId: peSubnetId
-    privateLinkServiceId: namespace.id
-    groupId: 'namespace'
-    privateDnsZoneId: privateDnsZoneId
-  }
-}
-
-// 2021-05-01-preview is the only diagnostic-settings API with categoryGroup support; the GA 2016-09-01 lacks it.
-#disable-next-line use-recent-api-versions
-resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'to-law'
-  scope: namespace
-  properties: {
-    workspaceId: logAnalyticsWorkspaceId
-    logs: [
-      { categoryGroup: 'allLogs', enabled: true }
-    ]
-    metrics: [
-      { category: 'AllMetrics', enabled: true }
-    ]
-  }
+// AVM does not output the service bus endpoint; read it back from the deployed namespace so the FQDN
+// stays correct in sovereign clouds instead of being assembled from a hard-coded suffix. Outputs are
+// evaluated after every resource in this file has deployed, so the reference resolves.
+resource deployedNamespace 'Microsoft.EventHub/namespaces@2026-01-01' existing = {
+  name: namespaceName
 }
 
 @description('Resource ID of the Event Hubs namespace.')
-output id string = namespace.id
+output id string = namespace.outputs.resourceId
 
 @description('Name of the Event Hubs namespace.')
-output name string = namespace.name
+output name string = namespace.outputs.name
 
 @description('Fully qualified namespace, e.g. mer-int-dev-evh.servicebus.windows.net, for identity-based client configuration.')
-output fullyQualifiedNamespace string = replace(replace(namespace.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
+output fullyQualifiedNamespace string = replace(replace(deployedNamespace.properties.serviceBusEndpoint, 'https://', ''), ':443/', '')
 
 @description('Names of the event hubs created.')
 output eventHubNames array = eventHubNames

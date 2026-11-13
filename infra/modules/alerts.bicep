@@ -1,7 +1,7 @@
 // Alert rules for the integration workload. Metric alerts live here; log-search alerts and the
 // availability test are in alerts-log.bicep. Each rule answers one operational question; severities
 // follow the on-call runbook: 1 = partners are impacted now, 2 = data is not flowing, 3 = capacity
-// or hygiene, act within business hours.
+// or hygiene, act within business hours. The rule resources come from AVM; the table below is ours.
 
 @description('Base name, e.g. "mer-int-dev".')
 param baseName string
@@ -193,13 +193,14 @@ var metricAlerts = [
   }
 ]
 
-resource metricAlertRules 'Microsoft.Insights/metricAlerts@2026-01-01' = [
+module metricAlertRules 'br/public:avm/res/insights/metric-alert:0.4.1' = [
   for alert in metricAlerts: {
-    name: '${baseName}-alert-${alert.name}'
-    location: 'global'
-    tags: tags
-    properties: {
-      description: alert.description
+    name: 'alert-${alert.name}'
+    params: {
+      name: '${baseName}-alert-${alert.name}'
+      location: 'global'
+      tags: tags
+      alertDescription: alert.description
       severity: alert.severity
       enabled: true
       autoMitigate: true
@@ -208,7 +209,7 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2026-01-01' = [
       windowSize: alert.windowSize
       criteria: {
         'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
-        allOf: [
+        allof: [
           {
             criterionType: 'StaticThresholdCriterion'
             name: alert.name
@@ -221,9 +222,7 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2026-01-01' = [
           }
         ]
       }
-      actions: [
-        { actionGroupId: actionGroupId }
-      ]
+      actions: [ actionGroupId ]
     }
   }
 ]
@@ -233,24 +232,19 @@ resource metricAlertRules 'Microsoft.Insights/metricAlerts@2026-01-01' = [
 // ---------------------------------------------------------------------------------------------
 
 // Service Health incidents for the subscription: the first thing on-call checks when evh-server-errors fires.
-resource serviceHealthAlert 'Microsoft.Insights/activityLogAlerts@2026-01-01' = {
-  name: '${baseName}-alert-service-health'
-  location: 'global'
-  tags: tags
-  properties: {
-    description: 'Azure Service Health incidents and planned maintenance affecting this subscription.'
+module serviceHealthAlert 'br/public:avm/res/insights/activity-log-alert:0.4.2' = {
+  name: 'alert-service-health'
+  params: {
+    name: '${baseName}-alert-service-health'
+    location: 'global'
+    tags: tags
+    alertDescription: 'Azure Service Health incidents and planned maintenance affecting this subscription.'
     enabled: true
     scopes: [ subscription().id ]
-    condition: {
-      allOf: [
-        { field: 'category', equals: 'ServiceHealth' }
-      ]
-    }
-    actions: {
-      actionGroups: [
-        { actionGroupId: actionGroupId }
-      ]
-    }
+    conditions: [
+      { field: 'category', equals: 'ServiceHealth' }
+    ]
+    actions: [ actionGroupId ]
   }
 }
 
