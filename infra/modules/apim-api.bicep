@@ -92,7 +92,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
 
 // Onboards the API to Defender for APIs (requires the Defender for APIs plan, enabled by platform policy):
 // inventory, sensitive-data classification and runtime threat detection on partner traffic.
-resource defenderApiCollection 'Microsoft.Security/apiCollections@2023-11-15' = {
+resource defenderApiCollection 'Microsoft.Security/apiCollections@2022-11-20-preview' = {
   name: api.name
   scope: apim
 }
