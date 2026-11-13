@@ -19,8 +19,8 @@ The company, "Meridian", is fictional. The problems are not.
 | Migration mechanics: Kafka → Event Hubs without losing events, shadow mode, database cutover after its writers, per-partner migration, rollback per wave | [docs/05-migration-plan.md](docs/05-migration-plan.md) |
 | Running it: SLOs, alert catalogue, runbooks, governance, handover | [docs/06-operate.md](docs/06-operate.md) |
 | Evaluating it: outcome scorecard, NFR verification, cost actuals vs estimate, retrospective — written before the program starts | [docs/07-evaluation.md](docs/07-evaluation.md) |
-| Eight architecture decision records with the alternatives that lost | [docs/adr/](docs/adr/) |
-| Infrastructure as code: spoke VNet, NSGs, private DNS, private endpoints, Event Hubs, Azure SQL, APIM (internal), Logic Apps Standard, Functions, Key Vault, monitoring, alerts — managed identity everywhere, no keys | [infra/](infra/) |
+| Nine architecture decision records with the alternatives that lost | [docs/adr/](docs/adr/) |
+| Infrastructure as code: spoke VNet, NSGs, private DNS, private endpoints, Event Hubs, Azure SQL, APIM (internal), Logic Apps Standard, Functions, Key Vault, monitoring, alerts — managed identity everywhere, no keys. **Azure Verified Modules** for the commodity resources, three hand-written modules where the configuration *is* the decision ([ADR-009](docs/adr/ADR-009-azure-verified-modules.md)) | [infra/](infra/) |
 | CI that enforces the WAF without an Azure subscription: `bicep build`, `bicep lint`, PSRule for Azure | [.github/workflows/infra-ci.yml](.github/workflows/infra-ci.yml) |
 
 ## The migration in one picture

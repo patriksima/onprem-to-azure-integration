@@ -12,3 +12,4 @@ One file per decision that somebody will question later. Format: context → opt
 | [006](ADR-006-no-service-bus-in-wave-1.md) | No Service Bus in the initial architecture; poison handling via blob + alert | accepted, revisit in wave 3 |
 | [007](ADR-007-identity-based-storage-and-no-keys.md) | No shared keys or connection strings anywhere; managed identity for host storage, Event Hubs, SQL | accepted |
 | [008](ADR-008-shadow-mode-over-feature-flags.md) | Consumer behaviour switched by one `CONSUMER_MODE` setting rather than a feature-flag service | accepted |
+| [009](ADR-009-azure-verified-modules.md) | Azure Verified Modules for commodity resources; hand-written modules only where the configuration carries the decision | accepted |
