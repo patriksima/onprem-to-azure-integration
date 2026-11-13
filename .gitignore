@@ -1,0 +1,14 @@
+# Bicep build output
+*.json.bicep.tmp
+infra/**/*.json
+!infra/bicepconfig.json
+!infra/apim/openapi/*.json
+
+# PSRule output
+reports/
+*.sarif
+
+# local
+.vscode/
+.DS_Store
+local.settings.json
