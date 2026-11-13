@@ -134,4 +134,4 @@ The integration team hands the workload to run-state when:
 - [ ] the decommission checklist from [05 §5](05-migration-plan.md#5-wave-4--decommission-weeks-3340) is complete or has dated owners
 
 ---
-Previous: [05 · Migration plan](05-migration-plan.md) · See also: [Architecture decision records](adr/)
+Previous: [05 · Migration plan](05-migration-plan.md) · Next: [07 · Evaluation](07-evaluation.md)

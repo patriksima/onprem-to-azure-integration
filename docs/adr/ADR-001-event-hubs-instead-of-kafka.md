@@ -4,7 +4,7 @@
 
 ## Context
 
-Three-broker Kafka 2.6 cluster on-prem, two topics, ~1 msg/s average, 45 msg/s peak, 7-day retention. Operated by one engineer. No TLS, no auth. The cluster is the single most person-dependent component in the estate ([02 §4 R1](../02-plan-assessment.md)).
+Three-broker Kafka 2.6 cluster on-prem, two topics, ~1 msg/s average, 45 msg/s peak, 7-day retention. Operated by one engineer. No TLS, no auth. The cluster is the single most person-dependent component in the estate ([02 §5 R1](../02-plan-assessment.md)).
 
 The CRM publisher uses `Confluent.Kafka` 1.x. Consumers are custom jobs that will be rebuilt anyway ([ADR-002](ADR-002-functions-and-logic-apps-split.md)).
 

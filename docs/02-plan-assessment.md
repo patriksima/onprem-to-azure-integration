@@ -80,7 +80,32 @@ Key observations:
 
 This table is the strongest argument for *rebuilding* the consumers rather than lifting them. There is nothing here worth preserving.
 
-## 3. Disposition per component (the "R" decision)
+## 3. Non-functional requirements
+
+Agreed with the business owners of the three flows and with IT security before any design work. Each has an ID so that design decisions ([04 §7](04-target-architecture.md#7-well-architected-framework-review)), alerts ([06 §3](06-operate.md#3-alert-catalogue)) and the post-migration evaluation ([07](07-evaluation.md)) can point at it. "Today" is the measured or honest baseline; where nobody knew, it says so.
+
+| ID | Area | Requirement | Today | Verified by |
+|---|---|---|---|---|
+| NFR-01 | Availability | Order intake path (CRM → event → consumers) available 99.9 % monthly during business hours; no planned downtime 06:00–22:00 CET | unknown (not measured) | SLO dashboard, [06 §1](06-operate.md#1-what-healthy-means--slis-and-slos) |
+| NFR-02 | Availability | Partner API 99.9 % monthly | n/a (no API) | APIM availability + Service Health |
+| NFR-03 | Latency | Order visible in reporting within 15 min (p99), 5 min (p95) | up to 24 h | `ReportingLatencySeconds` |
+| NFR-04 | Latency | Order confirmation email sent within 10 min for 99.5 % of orders | 5–10 min when the job works; hours when it does not | `NotificationsSent / OrdersCreated` |
+| NFR-05 | Throughput | Sustain 10× measured peak (450 msg/s, ~3 MB/s) without redesign; 100× with configuration only | cluster never load-tested | Event Hubs TU headroom, partition count, load test in dev |
+| NFR-06 | Recoverability | RPO ≤ 1 h, RTO ≤ 4 h for the integration layer (regional outage) | no DR | annual drill, [06 §5](06-operate.md#5-governance) |
+| NFR-07 | Recoverability | Any single event replayable for 7 days; any day's events reconstructable for 1 year | 7 days (Kafka retention), no archive | Event Hubs retention + Capture |
+| NFR-08 | Data integrity | Zero lost events across migration; duplicates never produce duplicate business effects | not measurable today | reconciliation query (wave 1 exit), idempotency tests |
+| NFR-09 | Security | No public endpoints; no shared secrets between Azure services; secrets rotated ≤ 12 months; TLS 1.2+ | plaintext Kafka, passwords in config | PSRule in CI, Defender for Cloud, Key Vault expiry |
+| NFR-10 | Security | Partner authentication per partner, revocable within 1 h | shared SFTP accounts | APIM subscription + client certificate |
+| NFR-11 | Compliance | Customer data at rest and in transit stays in the EU; audit trail of partner API calls retained 90 days | EU on-prem; no audit trail | region policy, APIM gateway logs |
+| NFR-12 | Observability | Any integration failure detected by IT within 15 min; any order traceable end-to-end by id in one query | next business day; no tracing | alert catalogue, `operation_Id` correlation |
+| NFR-13 | Maintainability | New event consumer from template to dev in ≤ 2 days; all infrastructure reproducible from source | weeks; manual | pipeline, module reuse |
+| NFR-14 | Operability | Tier-1 support resolves common failures with runbooks, without a developer | everything escalates to the integration team | hypercare metrics, [06 §6](06-operate.md#6-handover-criteria) |
+| NFR-15 | Cost | Production run cost ≤ €4,500/month at current volumes; cost per 1,000 events known | not attributable | cost management, monthly review |
+| NFR-16 | Migration | Every wave reversible within one change window; business operates on the previous state on Monday | — | rollback rehearsal per wave |
+
+Two of these shaped the architecture more than any other: **NFR-08** (which forced idempotent consumers and the shadow-mode reconciliation) and **NFR-16** (which forced the wave order and the MirrorMaker bridge). The rest are met by reasonable defaults; those two are why the plan looks the way it does.
+
+## 4. Disposition per component (the "R" decision)
 
 CAF's migration options, applied honestly:
 
@@ -98,7 +123,7 @@ CAF's migration options, applied honestly:
 
 A real assessment produces a few "we don't know yet" cells. Here it is A1. Writing "deferred" with a reason is better than pretending to a decision.
 
-## 4. Risks identified during assessment
+## 5. Risks identified during assessment
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
@@ -110,7 +135,7 @@ A real assessment produces a few "we don't know yet" cells. Here it is A1. Writi
 | R6 | Offset handling during Kafka → Event Hubs switch loses or replays events | medium | missing/duplicate records | Mirror topics with MirrorMaker 2; new consumers start from a known timestamp; reconciliation query in wave 1 exit criteria |
 | R7 | Private DNS misconfiguration makes services unreachable from on-prem | high (it always is) | CRM publisher cannot reach Event Hubs | Conditional forwarders from on-prem DNS to Azure DNS Private Resolver — part of wave 0 gate; tested with a canary VM |
 
-## 5. Waves — what goes together and why
+## 6. Waves — what goes together and why
 
 The ordering principle: **move the thing with the fewest dependents first, and never move a producer and its consumers in the same wave.**
 

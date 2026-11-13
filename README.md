@@ -13,11 +13,12 @@ The company, "Meridian", is fictional. The problems are not.
 | | Where |
 |---|---|
 | Turning business drivers into scope decisions — including what *not* to migrate | [docs/01-strategy.md](docs/01-strategy.md) |
-| Assessment with measured numbers, dependency map, disposition per component (rehost / replatform / rebuild / retire / defer) | [docs/02-plan-assessment.md](docs/02-plan-assessment.md) |
+| Assessment with measured numbers, dependency map, **non-functional requirements with IDs**, disposition per component (rehost / replatform / rebuild / retire / defer) | [docs/02-plan-assessment.md](docs/02-plan-assessment.md) |
 | Consuming a platform landing zone: explicit assumptions, spoke design, identity, wave-0 gate | [docs/03-ready-landing-zone.md](docs/03-ready-landing-zone.md) |
 | Target architecture with private networking, hybrid connectivity, error handling, idempotency, cost — and a **WAF review traceable to code** | [docs/04-target-architecture.md](docs/04-target-architecture.md) |
 | Migration mechanics: Kafka → Event Hubs without losing events, shadow mode, database cutover after its writers, per-partner migration, rollback per wave | [docs/05-migration-plan.md](docs/05-migration-plan.md) |
 | Running it: SLOs, alert catalogue, runbooks, governance, handover | [docs/06-operate.md](docs/06-operate.md) |
+| Evaluating it: outcome scorecard, NFR verification, cost actuals vs estimate, retrospective — written before the program starts | [docs/07-evaluation.md](docs/07-evaluation.md) |
 | Eight architecture decision records with the alternatives that lost | [docs/adr/](docs/adr/) |
 | Infrastructure as code: spoke VNet, NSGs, private DNS, private endpoints, Event Hubs, Azure SQL, APIM (internal), Logic Apps Standard, Functions, Key Vault, monitoring, alerts — managed identity everywhere, no keys | [infra/](infra/) |
 | CI that enforces the WAF without an Azure subscription: `bicep build`, `bicep lint`, PSRule for Azure | [.github/workflows/infra-ci.yml](.github/workflows/infra-ci.yml) |
@@ -61,7 +62,7 @@ Target architecture in detail, with the network layout and the end-to-end data f
 ## Repository layout
 
 ```
-docs/                 CAF-structured documentation (strategy → plan → ready → adopt → operate)
+docs/                 CAF-structured documentation (strategy → plan → ready → adopt → operate → evaluate)
 docs/adr/             architecture decision records
 infra/main.bicep      resource-group deployment, wires the modules
 infra/modules/        network · network-security · private-dns · private-endpoint · monitoring · identity · keyvault
