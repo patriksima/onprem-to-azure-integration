@@ -1,0 +1,118 @@
+name: infra-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - 'ps-rule.yaml'
+      - '.github/workflows/infra-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - 'ps-rule.yaml'
+      - '.github/workflows/infra-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the CLI so a Bicep release cannot change lint results between two identical commits.
+  BICEP_VERSION: v0.49.2
+
+jobs:
+  bicep:
+    name: Bicep build and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL -o bicep "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/bicep
+          bicep --version
+
+      - name: Build every module and the entry point
+        # Each module is compiled on its own so a broken module fails even if main.bicep stops referencing it.
+        # Warnings are printed; errors fail the step.
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r file; do
+            echo "::group::bicep build ${file}"
+            if ! bicep build "${file}" --stdout > /dev/null; then
+              status=1
+            fi
+            echo "::endgroup::"
+          done < <(find infra -name '*.bicep' | sort)
+          exit "${status}"
+
+      - name: Build parameter files
+        run: |
+          set -euo pipefail
+          for params in infra/params/*.bicepparam; do
+            echo "::group::bicep build-params ${params}"
+            bicep build-params "${params}" --stdout > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Lint (warnings fail the build)
+        # bicep lint exits 0 on warnings; we treat any diagnostic as a failure so the
+        # bicepconfig.json rule set is actually enforced and not just printed.
+        run: |
+          set -euo pipefail
+          output="$(bicep lint infra/main.bicep 2>&1 || true)"
+          if [ -n "${output}" ]; then
+            echo "${output}"
+            echo "::error::bicep lint reported diagnostics"
+            exit 1
+          fi
+          echo "bicep lint: no diagnostics"
+
+  psrule:
+    name: PSRule for Azure (Well-Architected)
+    runs-on: ubuntu-latest
+    needs: bicep
+    permissions:
+      contents: read
+      # Required to upload SARIF to the code-scanning tab.
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        # PSRule expands Bicep through the CLI; keep it on the same pinned version as the build job.
+        run: |
+          set -euo pipefail
+          curl -fsSL -o bicep "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/bicep
+          echo "PSRULE_AZURE_BICEP_PATH=/usr/local/bin/bicep" >> "$GITHUB_ENV"
+
+      - name: Run PSRule for Azure
+        uses: microsoft/ps-rule@v2
+        with:
+          modules: PSRule.Rules.Azure
+          inputPath: infra/
+          baseline: Azure.Default
+          outputFormat: Sarif
+          outputPath: reports/ps-rule-results.sarif
+          summary: true
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/ps-rule-results.sarif
+          category: ps-rule-azure

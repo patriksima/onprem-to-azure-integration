@@ -1,0 +1,50 @@
+#
+# PSRule for Azure configuration.
+# Expands main.bicep through both parameter files so rules see the real dev and prod shapes
+# (SKUs, zone redundancy, retention) rather than the module defaults.
+#
+
+include:
+  module:
+    - PSRule.Rules.Azure
+
+execution:
+  # Fail the pipeline on rule failures, surface unprocessed objects as warnings only.
+  unprocessedObject: Warn
+  ruleSuppressed: Warn
+
+input:
+  pathIgnore:
+    - '**/*.md'
+    - 'docs/**'
+    - '.github/**'
+    - '**/bicepconfig.json'
+    # main.bicep and the modules are validated through the .bicepparam expansion (dev + prod);
+    # expanding them standalone would fail on parameters that have no defaults by design.
+    - 'infra/main.bicep'
+    - 'infra/modules/**'
+    - 'infra/apim/**'
+
+output:
+  culture:
+    - en-US
+
+configuration:
+  # Expand Bicep so PSRule evaluates the resulting ARM resources, not the Bicep text.
+  AZURE_BICEP_FILE_EXPANSION: true
+  AZURE_BICEP_PARAMS_FILE_EXPANSION: true
+  AZURE_BICEP_FILE_EXPANSION_TIMEOUT: 60
+  # Well-Architected: pin the regions this workload is allowed in.
+  AZURE_RESOURCE_ALLOWED_LOCATIONS:
+    - swedencentral
+  # Deployment-time telemetry/tag conventions checked by Azure.Resource.* rules.
+  AZURE_RESOURCE_REQUIRED_TAGS:
+    - workload
+    - environment
+    - costCenter
+    - owner
+    - managedBy
+  AZURE_APIM_MIN_API_VERSION: '2021-08-01'
+
+rule:
+  baseline: Azure.Default

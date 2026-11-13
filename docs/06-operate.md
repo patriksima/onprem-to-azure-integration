@@ -30,26 +30,28 @@ Every log line and trace from the consumers carries `eventId`, `orderId`/`custom
 
 ## 3. Alert catalogue
 
-All alerts are defined in [`infra/modules/alerts.bicep`](../infra/modules/alerts.bicep) and route to the Action Group. Severity: 0 = page now, 1 = page in business hours, 2 = ticket, 3 = informational.
+Alerts marked **IaC** are defined in [`infra/modules/alerts.bicep`](../infra/modules/alerts.bicep) (metric alerts) and [`alerts-log.bicep`](../infra/modules/alerts-log.bicep) (scheduled-query alerts) and route to the Action Group. The rest are platform-owned or wave-3 additions. Severity: 0 = page now, 1 = page in business hours, 2 = ticket, 3 = informational.
 
-| Alert | Condition | Sev | Runbook |
-|---|---|---|---|
-| Reporting consumer failing | Function `requests/failed` > 0 in 5 min | 1 | [RB-01](#rb-01-consumer-failing) |
-| Notifications consumer failing | same | 1 | RB-01 |
-| Function App down | `HealthCheckStatus` < 100 for 5 min | 0 | RB-01 |
-| Logic App run failed | `LogicAppWorkflowRuntime` status == Failed, any in 5 min | 2 | [RB-02](#rb-02-logic-app-run-failed) |
-| Consumer lag | `IncomingMessages − OutgoingMessages` per consumer group > 1,000 over 15 min, **or** incoming > 0 and consumer executions == 0 over 15 min | 1 | [RB-03](#rb-03-consumer-lag) |
-| Event Hubs throttled | `ThrottledRequests` > 0 in 5 min | 2 | [RB-04](#rb-04-event-hubs-throttling) |
-| Event Hubs server errors | `ServerErrors` > 0 in 5 min | 1 | RB-04 |
-| Poison event received | new blob in `poison-messages` (StorageBlobLogs PutBlob) | 2 | [RB-05](#rb-05-poison-event) |
-| Azure SQL CPU | `cpu_percent` > 80 for 15 min | 2 | [RB-06](#rb-06-sql-pressure) |
-| Azure SQL storage | `storage_percent` > 85 | 2 | RB-06 |
-| APIM 5xx | `FailedRequests` (backend 5xx) > 5 in 5 min | 1 | [RB-07](#rb-07-partner-api-errors) |
-| APIM capacity | `Capacity` > 75 % for 15 min | 2 | RB-07 |
-| APIM availability test | 2 of 3 locations fail | 0 | RB-07 |
-| Key Vault availability | `Availability` < 100 % for 5 min | 1 | escalate to platform |
-| Key Vault secret near expiry | Event Grid `SecretNearExpiry` (30 d) | 3 | [RB-08](#rb-08-secret-rotation) |
-| VPN tunnel down (platform alert, subscribed) | `TunnelIngressBytes` == 0 for 10 min | 0 | platform runbook; our impact: publisher spools locally for up to 1 h |
+| Alert | Condition | Sev | Source | Runbook |
+|---|---|---|---|---|
+| Consumer failing (reporting, notifications) | App Insights `requests/failed` > 0 in 5 min, dimension `cloud/roleName` = Function App | 2 | IaC | [RB-01](#rb-01-consumer-failing) |
+| Function App host errors | `Http5xx` > 0 in 5 min — startup, storage, identity problems surface here before the trigger does | 2 | IaC | RB-01 |
+| Logic App run failed | `WorkflowRunsFailureRate` > 0 in 5 min | 2 | IaC | [RB-02](#rb-02-logic-app-run-failed) |
+| Consumer lag | KQL over `AzureMetrics`: `OutgoingMessages` < 50 % of `IncomingMessages × active consumer groups` over 15 min | 2 | IaC | [RB-03](#rb-03-consumer-lag) |
+| Event Hubs throttled | `ThrottledRequests` > 0 in 5 min | 3 | IaC | [RB-04](#rb-04-event-hubs-throttling) |
+| Event Hubs server errors | `ServerErrors` > 0 in 5 min | 2 | IaC | RB-04 |
+| Poison event received | `StorageBlobLogs` PutBlob on `/poison-messages/` in last 5 min | 2 | IaC | [RB-05](#rb-05-poison-event) |
+| Azure SQL CPU | `cpu_percent` > 80 for 15 min | 2 | IaC | [RB-06](#rb-06-sql-pressure) |
+| APIM gateway 5xx | `Requests` with `GatewayResponseCodeCategory = 5xx` > 5 in 5 min (the older `FailedRequests` metric is deprecated) | 1 | IaC | [RB-07](#rb-07-partner-api-errors) |
+| APIM capacity | `Capacity` > 75 % for 15 min | 3 | IaC | RB-07 |
+| APIM availability test | 2 of 3 locations fail — opt-in (`enableAvailabilityTest`), because an internal-mode gateway is unreachable from Azure test locations unless the platform exposes a health route | 1 | IaC (optional) | RB-07 |
+| Key Vault availability | `Availability` < 100 % for 5 min | 3 | IaC | escalate to platform |
+| Service Health | incident or planned maintenance in the subscription's region/services | 1 | IaC (activity log) | check scope, inform business |
+| Azure SQL storage | `storage_percent` > 85 | 2 | wave 2 addition | RB-06 |
+| Key Vault secret near expiry | Event Grid `SecretNearExpiry` (30 d) | 3 | wave 3 addition | [RB-08](#rb-08-secret-rotation) |
+| VPN tunnel down | `TunnelIngressBytes` == 0 for 10 min | 0 | platform alert, subscribed | platform runbook; our impact: publisher spools locally for up to 1 h |
+
+Why the IaC severities are mostly 2–3 at this stage: until the consumers are live (wave 1 flip), nothing here pages anyone. Severities are raised per wave in the parameter file as flows go into production — an alert that pages during shadow mode trains people to ignore it.
 
 Alert fatigue is a design failure. Every alert here has a named action; alerts that fired three times without an action are deleted or re-tuned in the monthly review.
 

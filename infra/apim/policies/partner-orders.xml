@@ -1,0 +1,69 @@
+<!--
+  API-scope policy for partner-orders (v1).
+  Loaded into Bicep with loadTextContent(), so this file is the single source of truth for the policy
+  and is reviewed in pull requests like code. Named values in {{double braces}} are defined in apim.bicep;
+  the secret one (partner-orders-callback-sig) is a Key Vault reference resolved by the APIM identity.
+-->
+<policies>
+  <inbound>
+    <base />
+
+    <!--
+      Partner authentication. Subscription keys are enforced by the API (subscriptionRequired = true);
+      once the partner identity provider is federated, replace keys with JWT validation:
+
+      <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-scheme="Bearer">
+        <openid-config url="https://login.microsoftonline.com/{{partner-tenant-id}}/v2.0/.well-known/openid-configuration" />
+        <audiences>
+          <audience>api://meridian-partner-orders</audience>
+        </audiences>
+        <required-claims>
+          <claim name="roles" match="any">
+            <value>Orders.Submit</value>
+          </claim>
+        </required-claims>
+      </validate-jwt>
+    -->
+
+    <!-- Per-partner throttle so one noisy integration cannot starve the others. -->
+    <rate-limit-by-key calls="300" renewal-period="60" counter-key="@(context.Subscription?.Id ?? context.Request.IpAddress)" increment-condition="@(context.Response.StatusCode &lt; 400)" />
+
+    <!-- Propagate or mint a correlation id; it travels APIM -> Logic App -> Function App -> SQL audit. -->
+    <set-variable name="correlationId" value='@(context.Request.Headers.GetValueOrDefault("x-correlation-id", context.RequestId.ToString()))' />
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables["correlationId"])</value>
+    </set-header>
+
+    <!-- Strip the partner subscription key before the call leaves the gateway. -->
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+
+    <!--
+      Backend is the Logic App Standard Request trigger, reached over the private endpoint
+      (privatelink.azurewebsites.net is linked to the VNet, APIM is in internal mode).
+      The SAS signature is the only secret and comes from Key Vault.
+    -->
+    <set-backend-service base-url="https://{{partner-orders-backend-host}}" />
+    <rewrite-uri template="/api/partner-orders/triggers/When_a_partner_submits_an_order/invoke?api-version=2022-05-01&amp;sp=%2Ftriggers%2FWhen_a_partner_submits_an_order%2Frun&amp;sv=1.0&amp;sig={{partner-orders-callback-sig}}" copy-unmatched-params="false" />
+  </inbound>
+
+  <backend>
+    <base />
+  </backend>
+
+  <outbound>
+    <base />
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables["correlationId"])</value>
+    </set-header>
+    <!-- Do not leak the backend host or Logic App run id to partners. -->
+    <set-header name="x-ms-workflow-run-id" exists-action="delete" />
+    <set-header name="x-ms-request-id" exists-action="delete" />
+  </outbound>
+
+  <on-error>
+    <base />
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@(context.Variables.ContainsKey("correlationId") ? (string)context.Variables["correlationId"] : context.RequestId.ToString())</value>
+    </set-header>
+  </on-error>
+</policies>

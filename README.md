@@ -64,9 +64,10 @@ Target architecture in detail, with the network layout and the end-to-end data f
 docs/                 CAF-structured documentation (strategy → plan → ready → adopt → operate)
 docs/adr/             architecture decision records
 infra/main.bicep      resource-group deployment, wires the modules
-infra/modules/        network · monitoring · keyvault · eventhubs · sql · storage · logicapp · functionapp · apim · alerts
+infra/modules/        network · network-security · private-dns · private-endpoint · monitoring · identity · keyvault
+                      storage · eventhubs · sql · logicapp · functionapp · apim · apim-api · rbac · alerts · alerts-log
 infra/params/         dev.bicepparam · prod.bicepparam
-infra/apim/           OpenAPI definition and policy fragments
+infra/apim/policies/  APIM policy for the partner API
 infra/bicepconfig.json  linter rules
 ps-rule.yaml          PSRule for Azure configuration (Well-Architected rule set)
 .github/workflows/    infra-ci: build, lint, PSRule
@@ -87,7 +88,7 @@ Install-Module PSRule.Rules.Azure -Scope CurrentUser
 Assert-PSRule -InputPath infra/ -Module PSRule.Rules.Azure -Format File
 ```
 
-Deploying for real means a resource group in a corp landing zone and the parameter values marked `TODO` in `infra/params/*.bicepparam` (object IDs, hub VNet ID, firewall IP). `az deployment group what-if` first; see [docs/03 §6](docs/03-ready-landing-zone.md#6-wave-0-gate--the-checklist-that-must-be-green-before-wave-1).
+Deploying for real means a resource group in a corp landing zone and replacing the placeholder values in `infra/params/*.bicepparam` (Entra object IDs, hub VNet ID, firewall IP). APIM, Event Hubs, SQL and site names are globally unique in Azure, so a name collision means changing the `prefix` parameter. `az deployment group what-if` first; see [docs/03 §6](docs/03-ready-landing-zone.md#6-wave-0-gate--the-checklist-that-must-be-green-before-wave-1).
 
 ## Scope and honesty
 

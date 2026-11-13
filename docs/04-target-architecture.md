@@ -80,9 +80,9 @@ flowchart TB
 
 - All PaaS services have **public network access disabled** and a **private endpoint** in `snet-pe`.
 - Logic Apps and Functions use **regional VNet integration** with `vnetRouteAllEnabled` so that *all* outbound traffic — including to Event Hubs and SQL — goes through the VNet, the route table, and the hub firewall.
-- APIM runs in **internal mode**; its private IP is the backend of the platform's Front Door / App Gateway.
+- APIM runs in **internal mode**; its private IP is the backend of the platform's Front Door / App Gateway. It still carries a Standard public IP — stv2 VNet injection requires one for the management plane even when no API is reachable through it. Expect the question in review; the answer is in `apim.bicep`.
 - **Private DNS zones** are workload-managed and linked to the spoke (see [03 §2 LZ-3](03-ready-landing-zone.md)). On-prem resolution works through conditional forwarders to the hub's DNS Private Resolver.
-- NSG on `snet-apim` carries the rules APIM needs to function (management endpoint 3443 from `ApiManagement` tag, 6390 from `AzureLoadBalancer`) — these are the rules people forget and then spend a day debugging a stuck deployment.
+- Every subnet has an NSG (PSRule insists, and so should you — including `snet-pe`), `defaultOutboundAccess` is off, and 22/3389 are denied outbound everywhere. The NSG on `snet-apim` additionally carries the rules APIM needs to function (management endpoint 3443 from `ApiManagement` tag, 6390 from `AzureLoadBalancer`) — these are the rules people forget and then spend a day debugging a stuck deployment.
 - The route table sends `0.0.0.0/0` to the firewall's private IP. The one exception APIM needs (management traffic must not be forced through the firewall without the `ApiManagement` service tag route) is handled by an explicit `ApiManagement → Internet` route on the APIM subnet.
 
 ## 4. Data flow — order created, end to end
