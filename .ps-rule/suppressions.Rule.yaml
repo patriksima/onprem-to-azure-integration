@@ -117,3 +117,22 @@ spec:
   if:
     name: '.'
     endsWith: -apim
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: avm-keys-parameter-is-key-definitions-not-key-material
+  annotations:
+    reason: >-
+      The AVM key-vault/vault and sql/server modules expose a parameter named `keys`. The rule flags it by
+      name, but it is an array of key *definitions* (type, size, rotation policy) used to create keys in
+      the vault — it never carries key material. This workload does not pass it at all. Scoped to the two
+      AVM deployments that declare it (ADR-009).
+spec:
+  rule:
+    - Azure.Deployment.SecureParameter
+  if:
+    name: '.'
+    in:
+      - kv
+      - sql-server
