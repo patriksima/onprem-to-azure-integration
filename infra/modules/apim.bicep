@@ -105,7 +105,7 @@ module managementPublicIp 'br/public:avm/res/network/public-ip-address:0.13.0' =
 }
 
 module apim 'br/public:avm/res/api-management/service:0.15.0' = {
-  name: 'apim'
+  name: 'apim-service'
   params: {
     name: apimName
     location: location

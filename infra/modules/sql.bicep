@@ -73,7 +73,7 @@ var databaseName = 'crm-reporting'
 var isServerless = contains(databaseSku.name, '_S_')
 
 module sqlServer 'br/public:avm/res/sql/server:0.23.0' = {
-  name: 'sql'
+  name: 'sql-server'
   params: {
     name: serverName
     location: location

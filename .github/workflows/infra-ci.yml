@@ -6,12 +6,16 @@ on:
     paths:
       - 'infra/**'
       - 'ps-rule.yaml'
+      - '.ps-rule/**'
+      - '.github/**'
       - '.github/workflows/infra-ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'infra/**'
       - 'ps-rule.yaml'
+      - '.ps-rule/**'
+      - '.github/**'
       - '.github/workflows/infra-ci.yml'
   workflow_dispatch:
 
@@ -33,6 +37,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Check for colliding deployment names
+        # Nested deployments share a namespace per resource group; duplicates overwrite each other at
+        # deploy time and neither build nor lint notices.
+        run: python3 .github/scripts/check-deployment-names.py
 
       - name: Install Bicep CLI
         run: |
