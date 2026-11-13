@@ -92,10 +92,7 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
 
 // Onboards the API to Defender for APIs (requires the Defender for APIs plan, enabled by platform policy):
 // inventory, sensitive-data classification and runtime threat detection on partner traffic.
-// 2022-11-20-preview is the version PSRule's Azure.APIM.DefenderCloud rule recognises; later versions
-// are equivalent for this resource.
-#disable-next-line use-recent-api-versions
-resource defenderApiCollection 'Microsoft.Security/apiCollections@2022-11-20-preview' = {
+resource defenderApiCollection 'Microsoft.Security/apiCollections@2023-11-15' = {
   name: api.name
   scope: apim
 }

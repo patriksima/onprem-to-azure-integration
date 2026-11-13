@@ -101,3 +101,19 @@ spec:
   if:
     name: '.'
     endsWith: -law
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: defender-for-apis-onboarded-in-api-module
+  annotations:
+    reason: >-
+      The partner API is onboarded to Defender for APIs by the Microsoft.Security/apiCollections
+      extension resource in infra/modules/apim-api.bicep. The rule evaluates the service object and does
+      not see an extension resource deployed from a separate module; the onboarding is real.
+spec:
+  rule:
+    - Azure.APIM.DefenderCloud
+  if:
+    name: '.'
+    endsWith: -apim
