@@ -157,13 +157,15 @@ output id string = storageAccount.outputs.resourceId
 output name string = storageAccount.outputs.name
 
 @description('Primary blob endpoint, e.g. https://name.blob.core.windows.net/.')
-output blobEndpoint string = storageAccount.outputs.serviceEndpoints.blob
+// Endpoints derived from the account name and the cloud's storage suffix — known before deployment and
+// independent of runtime properties (see sql.bicep for the same reasoning).
+output blobEndpoint string = 'https://${storageAccount.outputs.name}.blob.${environment().suffixes.storage}/'
 
 @description('Primary queue endpoint.')
-output queueEndpoint string = storageAccount.outputs.serviceEndpoints.queue
+output queueEndpoint string = 'https://${storageAccount.outputs.name}.queue.${environment().suffixes.storage}/'
 
 @description('Primary table endpoint.')
-output tableEndpoint string = storageAccount.outputs.serviceEndpoints.table
+output tableEndpoint string = 'https://${storageAccount.outputs.name}.table.${environment().suffixes.storage}/'
 
 @description('Versionless URI of the connection-string secret (for Key Vault references that follow rotation), or empty when no secret was requested.')
 output connectionStringSecretUri string = exportConnectionString ? storageAccount.outputs.exportedSecrets[connectionStringExport.secretName].secretUri : ''

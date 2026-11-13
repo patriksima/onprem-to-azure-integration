@@ -193,7 +193,10 @@ output serverId string = sqlServer.outputs.resourceId
 output serverName string = sqlServer.outputs.name
 
 @description('Fully qualified domain name of the logical server.')
-output serverFqdn string = sqlServer.outputs.fullyQualifiedDomainName
+// Derived from the name rather than read back from the resource: the value is known before deployment,
+// correct in every cloud (environment() suffix), and does not depend on a runtime property surviving a
+// nested-deployment boundary (which PSRule's offline expansion cannot evaluate).
+output serverFqdn string = '${sqlServer.outputs.name}${environment().suffixes.sqlServerHostname}'
 
 @description('Resource ID of the crm-reporting database.')
 output databaseId string = resourceId('Microsoft.Sql/servers/databases', sqlServer.outputs.name, databaseName)

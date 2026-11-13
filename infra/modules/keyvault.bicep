@@ -90,4 +90,5 @@ output id string = keyVault.outputs.resourceId
 output name string = keyVault.outputs.name
 
 @description('Vault URI, used for Key Vault references in app settings.')
-output vaultUri string = keyVault.outputs.uri
+// Derived from the name and the cloud's Key Vault DNS suffix (see sql.bicep for why).
+output vaultUri string = 'https://${keyVault.outputs.name}${environment().suffixes.keyvaultDns}/'
