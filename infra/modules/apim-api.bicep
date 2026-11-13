@@ -26,14 +26,20 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
   name: apimName
 }
 
-resource backendHostNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+// Backend entity rather than a named value: APIM backends carry the host, TLS validation settings and
+// (later) a circuit breaker; a named value would only carry a string.
+resource logicAppBackend 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
   parent: apim
-  name: 'partner-orders-backend-host'
+  name: 'partner-orders-logicapp'
   properties: {
-    displayName: 'partner-orders-backend-host'
-    value: backendHostName
-    secret: false
-    tags: [ 'partner-orders' ]
+    title: 'Partner orders — Logic App Standard'
+    description: 'Request trigger of the partner-orders workflow, reached over the private endpoint.'
+    protocol: 'http'
+    url: 'https://${backendHostName}'
+    tls: {
+      validateCertificateChain: true
+      validateCertificateName: true
+    }
   }
 }
 
@@ -84,6 +90,13 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
   }
 }
 
+// Onboards the API to Defender for APIs (requires the Defender for APIs plan, enabled by platform policy):
+// inventory, sensitive-data classification and runtime threat detection on partner traffic.
+resource defenderApiCollection 'Microsoft.Security/apiCollections@2023-11-15' = {
+  name: api.name
+  scope: apim
+}
+
 resource submitOrderOperation 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
   parent: api
   name: 'submit-order'
@@ -114,7 +127,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = 
     value: loadTextContent('../apim/policies/partner-orders.xml')
   }
   dependsOn: [
-    backendHostNamedValue
+    logicAppBackend
     callbackSignatureNamedValue
   ]
 }

@@ -85,7 +85,9 @@ resource managementPublicIp 'Microsoft.Network/publicIPAddresses@2025-05-01' = {
     name: 'Standard'
     tier: 'Regional'
   }
-  zones: empty(zones) ? null : zones
+  // Zone-redundant Standard IPs cost the same as zonal ones, so the IP is always zone-redundant
+  // even when the gateway itself is not (Developer tier, or Premium with one unit).
+  zones: [ '1', '2', '3' ]
   properties: {
     publicIPAllocationMethod: 'Static'
     publicIPAddressVersion: 'IPv4'

@@ -23,6 +23,10 @@ param logAnalyticsWorkspaceId string
 @description('Secret names to pre-create with a placeholder value so Key Vault references resolve on first deployment. Real values are written by the application release pipeline.')
 param seedSecretNames array = []
 
+@description('Placeholder written into each seed secret. Secure + newGuid() so no literal ever appears in template or deployment history; the release pipeline replaces it.')
+@secure()
+param seedSecretPlaceholder string = newGuid()
+
 @description('Object IDs that need Key Vault Secrets User before the apps exist (the Logic App host identity resolves Key Vault references at start-up). App system identities are granted in rbac.bicep.')
 param secretsUserPrincipalIds array = []
 
@@ -69,7 +73,7 @@ resource seedSecrets 'Microsoft.KeyVault/vaults/secrets@2025-05-01' = [
     parent: keyVault
     name: secretName
     properties: {
-      value: 'placeholder-set-by-release-pipeline'
+      value: seedSecretPlaceholder
       contentType: 'placeholder'
     }
   }

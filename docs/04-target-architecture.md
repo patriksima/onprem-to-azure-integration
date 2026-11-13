@@ -143,7 +143,8 @@ Event Hubs is a log, not a queue. It does not retry, it does not dead-letter, an
 - Key Vault: RBAC authorization, purge protection, private endpoint, no access policies.
 - TLS 1.2 minimum on everything; APIM disables TLS 1.0/1.1 and 3DES ciphers via `customProperties`.
 - Secrets rotation: ACS and partner credentials have Key Vault expiry set; alert 30 days before. The on-prem SPN certificate is the documented exception (annual, manual, with a calendar entry and an owner).
-- Defender for Cloud plans (platform policy): Storage, Key Vault, SQL, API Management.
+- Defender for Cloud plans (platform policy): Storage, Key Vault, SQL, API Management — the partner API is onboarded to Defender for APIs explicitly (`Microsoft.Security/apiCollections` in `apim-api.bicep`).
+- Azure SQL uses a customer-controlled maintenance window (`SQL_SwedenCentral_DB_2`, Fri–Sun 22:00–06:00) so platform maintenance lands inside the agreed change window rather than on a Monday morning.
 
 ## 7. Well-Architected Framework review
 
@@ -158,6 +159,8 @@ Format: pillar → the specific decisions in this design that serve it, the NFRs
 | **Performance Efficiency** (NFR-03, 04, 05) | Partition key design preserves ordering without global locks; batch processing in reporting consumer; Event Hubs auto-inflate; Function scale-out bounded by partition count (4) — documented so nobody "scales to 20 instances" and wonders why 16 idle | 4 partitions caps parallelism at 4 per consumer group. At 45 msg/s peak this is ~10× headroom. Partition count cannot be reduced later on Standard; chosen deliberately low. |
 
 Each row in this table is traceable to a resource property in `infra/` or a line in the migration plan. A WAF review that cannot be traced to code is a slide, not a review.
+
+The review is enforced, not just written: CI runs PSRule for Azure against the expanded templates. Where this design deliberately departs from a rule — single-unit APIM, the Logic App content-share key, no workspace replication — the exception is recorded with its reason in [`.ps-rule/suppressions.Rule.yaml`](../.ps-rule/suppressions.Rule.yaml) and shows up as a warning on every run, so it cannot quietly become permanent.
 
 ## 8. Cost
 

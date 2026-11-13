@@ -1,0 +1,105 @@
+# PSRule suppressions for this workload.
+# Every entry is a decision, not an oversight: each names the rule, the scope, and the reason, and
+# points to the document where the trade-off is recorded. Review alongside the quarterly WAF review
+# (docs/07-evaluation.md §5). Suppressions surface as warnings in CI so they are never invisible.
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: dev-environment-no-zone-redundancy
+  annotations:
+    reason: >-
+      Dev is torn down nightly and has no SLA; paying for zone redundancy there buys nothing
+      (docs/04-target-architecture.md §7 Cost Optimization).
+spec:
+  rule:
+    - Azure.AppService.AvailabilityZone
+    - Azure.APIM.AvailabilityZone
+    - Azure.PublicIP.AvailabilityZone
+  if:
+    name: '.'
+    contains:
+      - '-dev-'
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: logic-apps-workflow-standard-plan-is-zone-redundant
+  annotations:
+    reason: >-
+      The rule does not recognise the WorkflowStandard (WS1) SKU as zone-capable. Logic Apps Standard
+      supports zone redundancy on WS plans with >= 3 instances; prod sets zoneRedundant=true and capacity=3.
+spec:
+  rule:
+    - Azure.AppService.AvailabilityZone
+  if:
+    name: '.'
+    equals: mer-int-prod-asp-la
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: apim-premium-single-unit-until-tier-decision
+  annotations:
+    reason: >-
+      Production APIM runs one Premium unit. Availability zones need one unit per zone (3x cost) and
+      multi-region is not a requirement for five partners behind the platform Front Door. The tier
+      decision is open and dated in docs/adr/ADR-003-apim-as-partner-facade.md.
+spec:
+  rule:
+    - Azure.APIM.AvailabilityZone
+    - Azure.APIM.MultiRegion
+  if:
+    type: '.'
+    equals: Microsoft.ApiManagement/service
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: logic-app-content-share-needs-storage-key
+  annotations:
+    reason: >-
+      Logic Apps Standard requires an Azure Files content share, which has no identity-based access.
+      Shared-key access stays enabled on the Logic App host storage account only; the key is written by
+      Bicep straight into Key Vault and consumed through a Key Vault reference. The Function App storage
+      has shared keys disabled. Recorded in docs/adr/ADR-007-identity-based-storage-and-no-keys.md.
+spec:
+  rule:
+    - Azure.Storage.LocalAuth
+  if:
+    name: '.'
+    startsWith:
+      - merintdevla
+      - merintprodla
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: sql-master-database-declared-for-audit-diagnostics
+  annotations:
+    reason: >-
+      The master database is declared only so a diagnostic setting can route server-level audit
+      events to Log Analytics; its name is fixed by SQL Server.
+spec:
+  rule:
+    - Azure.SQL.DBName
+  if:
+    name: '.'
+    endsWith: /master
+---
+apiVersion: github.com/microsoft/PSRule/v1
+kind: SuppressionGroup
+metadata:
+  name: workload-log-workspace-not-replicated
+  annotations:
+    reason: >-
+      Resource logs are also shipped to the platform's central workspace by policy
+      (docs/03-ready-landing-zone.md §1). The workload workspace holds application telemetry for
+      troubleshooting; losing it in a regional outage is within the agreed RPO/RTO (NFR-06) and
+      replication would roughly double ingestion cost.
+spec:
+  rule:
+    - Azure.Log.Replication
+  if:
+    type: '.'
+    equals: Microsoft.OperationalInsights/workspaces

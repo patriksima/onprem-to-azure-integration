@@ -1,8 +1,8 @@
 <!--
   API-scope policy for partner-orders (v1).
   Loaded into Bicep with loadTextContent(), so this file is the single source of truth for the policy
-  and is reviewed in pull requests like code. Named values in {{double braces}} are defined in apim.bicep;
-  the secret one (partner-orders-callback-sig) is a Key Vault reference resolved by the APIM identity.
+  and is reviewed in pull requests like code. The backend entity and the one named value
+  (partner-orders-callback-sig, a Key Vault reference resolved by the APIM identity) are defined in apim-api.bicep.
 -->
 <policies>
   <inbound>
@@ -42,7 +42,7 @@
       (privatelink.azurewebsites.net is linked to the VNet, APIM is in internal mode).
       The SAS signature is the only secret and comes from Key Vault.
     -->
-    <set-backend-service base-url="https://{{partner-orders-backend-host}}" />
+    <set-backend-service backend-id="partner-orders-logicapp" />
     <rewrite-uri template="/api/partner-orders/triggers/When_a_partner_submits_an_order/invoke?api-version=2022-05-01&amp;sp=%2Ftriggers%2FWhen_a_partner_submits_an_order%2Frun&amp;sv=1.0&amp;sig={{partner-orders-callback-sig}}" copy-unmatched-params="false" />
   </inbound>
 

@@ -11,6 +11,9 @@ param location string
 @description('Resource tags.')
 param tags object
 
+@description('Public maintenance configuration for the database. SQL_<Region>_DB_2 = Fri–Sun 22:00–06:00 local, which matches the agreed change window; SQL_Default lets Azure pick any time.')
+param maintenanceWindowName string = 'SQL_SwedenCentral_DB_2'
+
 @description('Display name (UPN or group name) of the Entra principal that administers the server. Use a group, not a person.')
 param entraAdminLogin string
 
@@ -101,6 +104,7 @@ resource database 'Microsoft.Sql/servers/databases@2025-01-01' = {
     readScale: 'Disabled'
     requestedBackupStorageRedundancy: backupStorageRedundancy
     licenseType: 'LicenseIncluded'
+    maintenanceConfigurationId: subscriptionResourceId('Microsoft.Maintenance/publicMaintenanceConfigurations', maintenanceWindowName)
     // Ledger/TDE defaults are already on; stating TDE explicitly is not needed in this API version.
   }
 }

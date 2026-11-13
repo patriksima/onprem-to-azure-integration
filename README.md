@@ -71,6 +71,7 @@ infra/params/         dev.bicepparam · prod.bicepparam
 infra/apim/policies/  APIM policy for the partner API
 infra/bicepconfig.json  linter rules
 ps-rule.yaml          PSRule for Azure configuration (Well-Architected rule set)
+.ps-rule/             rule suppressions — each one a recorded decision with its reason
 .github/workflows/    infra-ci: build, lint, PSRule
 ```
 
